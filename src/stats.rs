@@ -10,9 +10,16 @@ pub struct BuildingStats {
     pub health: i32,
     pub damage: i32,
     pub hit_speed_ms: u32,
-    pub range: f32,
+    pub range_max: f32, // Changed from 'range' to support the Mortar logic
     pub footprint_x: usize,
     pub footprint_y: usize,
+    
+    // Optional edge cases we discussed
+    pub range_min: Option<f32>, 
+    pub death_payload_id: Option<u32>,
+    pub hidden_when_inactive: Option<bool>,
+    pub spawns_troop_id: Option<u32>,
+    pub ignores_deployment_zones: Option<bool>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -27,12 +34,19 @@ pub struct TroopStats {
     pub range: f32,
     pub footprint_x: usize,
     pub footprint_y: usize,
-    // Splash Mechanics (Optional)
-    pub splash_radius: Option<f32>,  // e.g., 1.5 tiles
-    pub splash_type: Option<String>, // "target_centered", "self_centered", or "linear"
-    pub pierce_length: Option<f32>,  // Only used if splash_type is "linear" (Bowler)
-}
+    
+    // --- The New Physics & Targeting Rules ---
+    pub is_flying: bool,
+    pub targets_air: bool,
+    pub targets_ground: bool,
+    pub target_preference: String, // "Any" or "Buildings"
+    pub mass: i32,
 
+    // Splash Mechanics (Optional)
+    pub splash_radius: Option<f32>,  
+    pub splash_type: Option<String>, 
+    pub pierce_length: Option<f32>,  
+}
 #[derive(Deserialize, Debug, Clone)]
 pub struct SpellStats {
     pub id: u32,
