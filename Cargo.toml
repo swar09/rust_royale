@@ -1,0 +1,15 @@
+[package]
+name = "rust_royale"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+# The core ECS game engine
+bevy = "0.13.0" 
+
+# Optional but highly recommended for fast compilation during dev
+[profile.dev]
+opt-level = 1
+
+[profile.dev.package."*"]
+opt-level = 3
