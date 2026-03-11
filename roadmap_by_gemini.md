@@ -1,62 +1,37 @@
-The Global Architecture (The 4 Layers of the Game)
-Your game will be built in four distinct layers, stacked like a cake.
+current roadmap
+Phase 1: The Combat Loop (Making it Violent)
+Right now, your Knights are pacifists who walk off the edge of the board. We need them to fight.
 
-Layer 1: The Static Data (The "Spreadsheet")
+Targeting AI: A system where units scan for the closest enemy and stop walking when Distance <= Range.
 
-What it is: This is where your confusion gets solved! We will have a simple JSON or CSV file containing the raw Level 11 stats for every entity.
+Combat System: A timer-based system reading hit_speed_ms to swing swords and subtract Health.
 
-Examples: Princess_Tower_Health: 3052, King_Tower_Health: 4824, Knight_HP: 1674, Knight_Damage: 202.
+Death & Cleanup: A system that despawns entities when their health reaches 0.
 
-Why it's Layer 1: The engine reads this file when it boots up. If you want to tweak a stat, you just change the text file; you don't rewrite the Rust code.
+Phase 2: The Match Rules (Making it a Game)
+Right now, the game never starts and never ends.
 
-Layer 2: The Core Engine (The "Brain")
+Towers: Spawning the King and Princess towers at their exact fixed-point coordinates on Startup.
 
-What it is: The Bevy ECS, the 18x32 Matrix, the A* Pathfinding, the spatial hashing, and the fixed-point math we just documented.
+Match Clock & Phases: A global timer that handles the 3-minute match, triggers 2x Elixir at the 2:00 mark, and initiates Overtime.
 
-How it uses Layer 1: When you drop a Knight, the engine looks at Layer 1, says "Ah, Level 11 Knight has 1674 HP," and attaches that number to the new entity.
+Win Condition: Halting the game and declaring a winner when a King Tower falls or the clock runs out.
 
-Layer 3: The Multiplayer Sync (The "Network")
+Phase 3: The Card System (Making it a Deck)
+Right now, you are hardcoding the "knight" into your mouse clicks.
 
-What it is: The ggrs rollback crate and the Room ID matchmaker.
+The Queue Array: Implementing the strict 8-slot array to hold your deck.
 
-How it works: It sits on top of the engine. It doesn't care about Knight health. It only cares about intercepting Player 1 and Player 2's mouse clicks and feeding them into Layer 2 at the exact same frame.
+The Hand: Drawing 4 random cards into an active hand that you can select from.
 
-Layer 4: The UI & Presentation (The "Skin")
+The Rotation: Shifting the array and pulling a new card when you spend Elixir to play a troop.
 
-What it is: The graphics, the dragging animations, the Elixir bar, and the main menu screen.
+Phase 4: Advanced Engine Mechanics (Making it Professional)
+The Spatial Hash Map: Upgrading our combat to use the grid "buckets" so the engine can handle 100 units without dropping frame rates.
 
+Spells & AoE: Handling cards like the Fireball that don't walk, but instead spawn, deal radius damage, and instantly despawn.
 
-The Development Roadmap (How we actually build it)
-To build this without losing our minds, we cannot build all four layers at once. We build it in Milestones.
+Dynamic Deployment Zones: Repainting the red/blue grid validation when an enemy Princess tower is destroyed.
 
-Milestone 1: The Offline Sandbox (Data + Environment)
-Step A: We create the JSON file holding the Level 11 stats for the Towers and 2 basic cards (e.g., Knight and Musketeer).
-
-Step B: We build the 18x32 Grid in Rust.
-
-Step C: We write a script that reads the JSON file and spawns the Towers onto the grid with their correct 3052 and 4824 health pools.
-
-Goal: You open the app, you see a grid, and you see towers that actually possess health data.
-
-Milestone 2: The Combat Loop (Logic)
-Step A: We build the Spawner so clicking the mouse drops a Knight.
-
-Step B: We write the A* pathfinding so the Knight walks to the tower.
-
-Step C: We write the Combat System. The Knight hits the tower, and the tower's health drops from 3052 to 2850. When it hits 0, the tower disappears.
-
-Goal: You can play a primitive, offline game against a dummy opponent on a single screen.
-
-Milestone 3: The Multiplayer (Networking)
-Step A: We spin up a tiny web server to handle the "Room ID" handshake.
-
-Step B: We integrate ggrs. Instead of one mouse controlling the game, the engine waits for inputs from both PC A and PC B.
-
-Goal: You and your friend can connect from different houses and drop units on the same synchronized grid.
-
-Milestone 4: The Game Rules (Polish)
-Step A: We add the Match Clock, the 2x Elixir rules, and the Deck rotation queue we documented earlier.
-
-Step B: UI polish (health bars, timers).
-
-Goal: The fully playable game.
+Phase 5: Multiplayer (Making it 1v1)
+Rollback Netcode: Integrating ggrs to sync Player 1 and Player 2 inputs across the internet deterministically.
