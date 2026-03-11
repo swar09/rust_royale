@@ -31,3 +31,12 @@ pub struct SpawnRequest {
 // The continuous fixed-point speed of the unit
 #[derive(Component, Debug)]
 pub struct Velocity(pub i32);
+
+// The global state for the player's economy
+#[derive(Resource, Debug)]
+pub struct PlayerState {
+    pub elixir: f32, // Continuous float, capped at 10.0
+}
+
+#[derive(Component)]
+pub struct ElixirUIText;

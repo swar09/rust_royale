@@ -1,5 +1,5 @@
 use crate::arena::{ArenaGrid, TileType};
-use crate::components::{Health, Position, SpawnRequest, Team, Velocity};
+use crate::components::{Health, PlayerState, Position, SpawnRequest, Team, Velocity};
 use crate::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 use crate::stats::{GlobalStats, SpeedTier};
 use bevy::{app::AppExit, prelude::*};
@@ -151,13 +151,46 @@ pub fn handle_mouse_clicks(
     }
 }
 
+pub fn elixir_generation_system(time: Res<Time>, mut player_state: ResMut<PlayerState>) {
+    // 1 Elixir every 2.8 seconds = ~0.357 Elixir per second
+    let generation_rate = 1.0 / 2.8;
+
+    // time.delta_seconds() ensures it is perfectly tied to the clock, not frame rate
+    player_state.elixir += generation_rate * time.delta_seconds();
+
+    // The strict 10.0 cap
+    if player_state.elixir > 10.0 {
+        player_state.elixir = 10.0;
+    }
+}
+
 pub fn spawn_entity_system(
     mut commands: Commands,
     mut spawn_requests: EventReader<SpawnRequest>,
     global_stats: Res<GlobalStats>,
+    mut player_state: ResMut<PlayerState>, // <-- 1. Ask Bevy for the Player's bank account!
 ) {
     for request in spawn_requests.read() {
         if let Some(troop_data) = global_stats.0.troops.get(&request.card_key) {
+            // --- 2. THE VALIDATION GATE ---
+            let cost = troop_data.elixir_cost as f32;
+
+            if player_state.elixir < cost {
+                // The player is broke! Reject the click and move on.
+                println!(
+                    "ERROR: Not enough Elixir! Need {}, but only have {:.1}",
+                    cost, player_state.elixir
+                );
+                continue;
+            }
+
+            // --- 3. THE TRANSACTION ---
+            player_state.elixir -= cost;
+            println!(
+                "Spent {} Elixir. Remaining: {:.1}",
+                cost, player_state.elixir
+            );
+
             // Convert grid coordinates to fixed-point center-of-tile coordinates
             let fixed_x = (request.grid_x * 1000) + 500;
             let fixed_y = (request.grid_y * 1000) + 500;
@@ -249,5 +282,37 @@ pub fn draw_entities(mut gizmos: Gizmos, query: Query<(&Position, &Team)>) {
             crate::constants::TILE_SIZE * 0.4,
             color,
         );
+    }
+}
+
+pub fn setup_ui(mut commands: Commands) {
+    // We create a Text node and instantly give it our Marker component
+    commands.spawn((
+        TextBundle::from_section(
+            "Elixir: 0.0", // Dummy starting text
+            TextStyle {
+                font_size: 40.0,
+                color: Color::WHITE,
+                ..default()
+            },
+        )
+        .with_style(Style {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(20.0),
+            left: Val::Px(20.0),
+            ..default()
+        }),
+        crate::components::ElixirUIText, // <-- THE MAKER TAG!
+    ));
+}
+
+pub fn update_elixir_ui(
+    player_state: Res<PlayerState>, // Read bank account
+    // Find exactly ONE mutable text component that also has our marker tag
+    mut query: Query<&mut Text, With<crate::components::ElixirUIText>>,
+) {
+    if let Ok(mut text) = query.get_single_mut() {
+        // Update the string on screen! {:.1} rounds it to 1 decimal place (e.g. 5.4)
+        text.sections[0].value = format!("Elixir: {:.1}", player_state.elixir);
     }
 }
