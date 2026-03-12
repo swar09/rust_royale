@@ -7,6 +7,8 @@ use std::collections::HashMap;
 
 #[derive(Deserialize, Debug, Clone, PartialEq)]
 pub enum SpeedTier {
+    #[serde(rename = "Very Slow")]
+    VerySlow,
     Slow,
     Medium,
     Fast,

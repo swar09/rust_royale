@@ -200,11 +200,13 @@ pub fn spawn_entity_system(
             let fixed_y = (request.grid_y * 1000) + 500;
 
             // --- THE ENUM TO MATH TRANSLATION ---
+            // 1 unit of speed = 0.02 tiles/sec (CR logic) mapped to Fixed-Point (1000 = 1 tile)
             let math_speed = match troop_data.speed {
-                SpeedTier::Slow => 1000,     // 1.0 tiles per second
-                SpeedTier::Medium => 1500,   // 1.5 tiles per second
-                SpeedTier::Fast => 2000,     // 2.0 tiles per second
-                SpeedTier::VeryFast => 2500, // 2.5 tiles per second
+                SpeedTier::VerySlow => 600,  // 30  units = 0.6 tiles/sec
+                SpeedTier::Slow => 900,      // 45  units = 0.9 tiles/sec
+                SpeedTier::Medium => 1200,   // 60  units = 1.2 tiles/sec
+                SpeedTier::Fast => 1800,     // 90  units = 1.8 tiles/sec
+                SpeedTier::VeryFast => 2400, // 120 units = 2.4 tiles/sec
             };
 
             // Calculate the radius (footprint / 2) in fixed-point math

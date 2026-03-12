@@ -35,7 +35,7 @@
             "hit_speed_ms": 1200,
             "deploy_time_sec": 1.0,
             "first_attack_sec": 0.5,
-            "speed": "Slow",
+            "speed": "Medium",
             "range": 1.2,
             "footprint_x": 1,
             "footprint_y": 1,
