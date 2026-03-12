@@ -7,8 +7,8 @@ use rust_royale::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 use rust_royale::stats::{GameStats, GlobalStats};
 use rust_royale::systems::{
     combat_damage_system, deployment_system, draw_debug_grid, draw_entities, mouse_interaction,
-    physics_movement_system, setup_camera, spawn_entity_system, targeting_system,
-    troop_collision_system, window_controls,
+    physics_movement_system, setup_camera, spawn_entity_system, spawn_towers_system,
+    targeting_system, troop_collision_system, window_controls,
 };
 
 // --- CUSTOM SANDBOX SYSTEM: Dual-Wielding Spawners! ---
@@ -81,7 +81,7 @@ fn main() {
         // INFINITE ELIXIR FOR TESTING!
         .insert_resource(PlayerState { elixir: 1000.0 })
         .add_event::<SpawnRequest>()
-        .add_systems(Startup, setup_camera)
+        .add_systems(Startup, (setup_camera, spawn_towers_system))
         .add_systems(
             Update,
             (
