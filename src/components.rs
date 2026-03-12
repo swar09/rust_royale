@@ -40,3 +40,19 @@ pub struct PlayerState {
 
 #[derive(Component)]
 pub struct ElixirUIText;
+
+// Stores the specific Entity ID of the enemy we are currently attacking
+#[derive(Component, Debug)]
+pub struct Target(pub Option<Entity>);
+
+// Holds the raw combat stats we read from JSON
+#[derive(Component, Debug)]
+pub struct AttackStats {
+    pub damage: i32,
+    pub range: f32, // Stored as tiles (e.g., 1.2)
+    pub hit_speed_ms: u32,
+}
+
+// A Bevy stopwatch to ensure they only swing the sword every X seconds
+#[derive(Component, Debug)]
+pub struct AttackTimer(pub Timer);
