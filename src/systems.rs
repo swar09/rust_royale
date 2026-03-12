@@ -274,34 +274,39 @@ pub fn spawn_entity_system(
 
 pub fn physics_movement_system(
     time: Res<Time>,
-    mut movers: Query<
-        (
-            Entity,
-            &mut Position,
-            &Velocity,
-            &Team,
-            &Target,
-            &AttackStats,
-        ),
-        Without<DeployTimer>,
-    >,
+    // We use a ParamSet here because we need to query the Position of ALL entities (like Towers),
+    // but simultaneously need to mutably query Position for the movers. ParamSet avoids the conflict!
+    mut queries: ParamSet<(
+        Query<(Entity, &Position)>,
+        Query<
+            (
+                Entity,
+                &mut Position,
+                &Velocity,
+                &Team,
+                &Target,
+                &AttackStats,
+            ),
+            Without<DeployTimer>,
+        >,
+    )>,
 ) {
     let delta_time = time.delta_seconds();
 
-    // Pass 1: Snapshot all current positions into a HashMap so we can look up targets
-    // without needing a second (conflicting) query.
-    let position_snapshot: std::collections::HashMap<Entity, (i32, i32)> = movers
-        .iter()
-        .map(|(ent, pos, _, _, _, _)| (ent, (pos.x, pos.y)))
-        .collect();
+    // Pass 1: Snapshot ALL current positions into a HashMap so we can look up targets
+    let mut position_snapshot: std::collections::HashMap<Entity, (i32, i32)> =
+        std::collections::HashMap::new();
+    for (ent, pos) in queries.p0().iter() {
+        position_snapshot.insert(ent, (pos.x, pos.y));
+    }
 
-    // Pass 2: Now iterate mutably and apply movement
-    for (_ent, mut pos, velocity, team, target, attack_stats) in movers.iter_mut() {
+    // Pass 2: Now iterate mutably and apply movement for anything that has Velocity
+    for (_ent, mut pos, velocity, team, target, attack_stats) in queries.p1().iter_mut() {
         let frame_movement = (velocity.0 as f32 * delta_time) as i32;
 
         match target.0 {
             Some(target_ent) => {
-                // Look up the target's position from our snapshot
+                // Look up the target's position from our snapshot!
                 if let Some(&(tx, ty)) = position_snapshot.get(&target_ent) {
                     let dx = (tx - pos.x) as f32 / 1000.0;
                     let dy = (ty - pos.y) as f32 / 1000.0;
@@ -333,7 +338,15 @@ pub fn physics_movement_system(
     }
 }
 
-pub fn draw_entities(mut gizmos: Gizmos, query: Query<(&Position, &Team)>) {
+pub fn draw_entities(
+    mut gizmos: Gizmos,
+    query: Query<(
+        &Position,
+        &Team,
+        Option<&TargetingProfile>,
+        Option<&PhysicalBody>,
+    )>,
+) {
     let total_width = crate::constants::ARENA_WIDTH as f32 * crate::constants::TILE_SIZE;
     let total_height = crate::constants::ARENA_HEIGHT as f32 * crate::constants::TILE_SIZE;
 
@@ -341,7 +354,7 @@ pub fn draw_entities(mut gizmos: Gizmos, query: Query<(&Position, &Team)>) {
     let start_x = -total_width / 2.0;
     let start_y = -total_height / 2.0;
 
-    for (pos, team) in query.iter() {
+    for (pos, team, profile, body) in query.iter() {
         // 1. Convert fixed-point (e.g., 1500) back to float grid coords (1.5)
         let float_x = pos.x as f32 / 1000.0;
         let float_y = pos.y as f32 / 1000.0;
@@ -355,7 +368,28 @@ pub fn draw_entities(mut gizmos: Gizmos, query: Query<(&Position, &Team)>) {
             Team::Red => Color::TOMATO,
         };
 
-        // Draw the unit as a filled circle!
+        if let Some(prof) = profile {
+            if prof.is_building {
+                // To get the true size in pixels, we look at the 'radius' (which is footprint / 2)
+                let visual_width_tiles = if let Some(b) = body {
+                    // physical body radius is stored as (footprint * 1000) / 2
+                    // We want the total width in tiles: (radius * 2) / 1000
+                    (b.radius * 2) as f32 / 1000.0
+                } else {
+                    3.0 // Fallback
+                };
+
+                gizmos.rect_2d(
+                    Vec2::new(screen_x, screen_y),
+                    0.0,
+                    Vec2::splat(crate::constants::TILE_SIZE * visual_width_tiles),
+                    color,
+                );
+                continue;
+            }
+        }
+
+        // Draw the walking troops as a filled circle!
         gizmos.circle_2d(
             Vec2::new(screen_x, screen_y),
             crate::constants::TILE_SIZE * 0.4,
@@ -614,5 +648,71 @@ pub fn troop_collision_system(
             pos_b.x -= (dir_x * overlap * push_ratio_b * push_force) as i32;
             pos_b.y -= (dir_y * overlap * push_ratio_b * push_force) as i32;
         }
+    }
+}
+
+pub fn spawn_towers_system(mut commands: Commands, global_stats: Res<GlobalStats>) {
+    let princess_data = global_stats.0.buildings.get("princess_tower").unwrap();
+    let king_data = global_stats.0.buildings.get("king_tower").unwrap();
+
+    let towers = vec![
+        // Player Side (Blue)
+        ("princess_tower", Team::Blue, 2, 5, princess_data),
+        ("princess_tower", Team::Blue, 13, 5, princess_data),
+        ("king_tower", Team::Blue, 7, 1, king_data),
+        // Opponent Side (Red)
+        ("princess_tower", Team::Red, 2, 24, princess_data),
+        ("princess_tower", Team::Red, 13, 24, princess_data),
+        ("king_tower", Team::Red, 7, 27, king_data),
+    ];
+
+    for (name, team, start_x, start_y, data) in towers {
+        // Calculate center precisely based on footprint
+        let size_x = data.footprint_x as f32;
+        let size_y = data.footprint_y as f32;
+
+        let center_float_x = start_x as f32 + (size_x / 2.0);
+        let center_float_y = start_y as f32 + (size_y / 2.0);
+
+        let fixed_x = (center_float_x * 1000.0) as i32;
+        let fixed_y = (center_float_y * 1000.0) as i32;
+
+        let collision_radius = (data.footprint_x as i32 * 1000) / 2;
+
+        commands.spawn((
+            Position {
+                x: fixed_x,
+                y: fixed_y,
+            },
+            Health(data.health),
+            team,
+            Target(None),
+            PhysicalBody {
+                radius: collision_radius,
+                mass: 99_999, // Immovable!
+            },
+            AttackStats {
+                damage: data.damage,
+                range: data.range_max,
+                hit_speed_ms: data.hit_speed_ms,
+                first_attack_sec: data.first_attack_sec,
+            },
+            AttackTimer(Timer::from_seconds(
+                data.hit_speed_ms as f32 / 1000.0,
+                TimerMode::Repeating,
+            )),
+            TargetingProfile {
+                is_flying: false,
+                is_building: true,
+                targets_air: true,
+                targets_ground: true,
+                preference: crate::stats::TargetPreference::Any,
+            },
+        ));
+
+        println!(
+            "SPAWNED: {} (Team: {:?}) at Center Grids [{}, {}]!",
+            name, team, center_float_x, center_float_y
+        );
     }
 }
