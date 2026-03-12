@@ -1,5 +1,7 @@
 use crate::arena::{ArenaGrid, TileType};
-use crate::components::{Health, PlayerState, Position, SpawnRequest, Team, Velocity};
+use crate::components::{
+    AttackStats, AttackTimer, Health, PlayerState, Position, SpawnRequest, Target, Team, Velocity,
+};
 use crate::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 use crate::stats::{GlobalStats, SpeedTier};
 use bevy::{app::AppExit, prelude::*};
@@ -82,7 +84,9 @@ pub fn mouse_interaction(
                 (-total_width / 2.0) + (grid_x as f32 * TILE_SIZE) + (TILE_SIZE / 2.0),
                 (-total_height / 2.0) + (grid_y as f32 * TILE_SIZE) + (TILE_SIZE / 2.0),
             );
-            gizmos.rect_2d(pos, 0.0, Vec2::splat(TILE_SIZE * 0.9), Color::YELLOW);
+
+            // Draw it slightly larger than 0.9 so it surrounds the tile and doesn't Z-fight!
+            gizmos.rect_2d(pos, 0.0, Vec2::splat(TILE_SIZE * 1.05), Color::YELLOW);
         }
     }
 }
@@ -212,6 +216,18 @@ pub fn spawn_entity_system(
                     Velocity(math_speed), // Give the entity physical speed!
                     Health(troop_data.health),
                     request.team,
+                    // --- NEW COMBAT COMPONENTS ---
+                    Target(None), // Starts with no target
+                    AttackStats {
+                        damage: troop_data.damage,
+                        range: troop_data.range,
+                        hit_speed_ms: troop_data.hit_speed_ms,
+                    },
+                    // Create a repeating timer based on the JSON hit speed
+                    AttackTimer(Timer::from_seconds(
+                        troop_data.hit_speed_ms as f32 / 1000.0,
+                        TimerMode::Repeating,
+                    )),
                 ))
                 .id();
 
@@ -235,13 +251,18 @@ pub fn spawn_entity_system(
 
 pub fn physics_movement_system(
     time: Res<Time>,
-    // Query every entity that has BOTH a Position and a Velocity
-    mut query: Query<(&mut Position, &Velocity, &Team)>,
+    // We add &Target to the query so we know if they are fighting!
+    mut query: Query<(&mut Position, &Velocity, &Team, &Target)>,
 ) {
     // time.delta_seconds() ensures movement is tied to actual time, not frame rate!
     let delta_time = time.delta_seconds();
 
-    for (mut pos, velocity, team) in query.iter_mut() {
+    for (mut pos, velocity, team, target) in query.iter_mut() {
+        // --- NEW LINE: If we have a target, STAND STILL! ---
+        if target.0.is_some() {
+            continue;
+        }
+
         // Calculate how much distance to move this frame
         // Multiply by 1000 to keep it in our Fixed-Point format
         let frame_movement = (velocity.0 as f32 * delta_time) as i32;
@@ -314,5 +335,99 @@ pub fn update_elixir_ui(
     if let Ok(mut text) = query.get_single_mut() {
         // Update the string on screen! {:.1} rounds it to 1 decimal place (e.g. 5.4)
         text.sections[0].value = format!("Elixir: {:.1}", player_state.elixir);
+    }
+}
+
+pub fn targeting_system(
+    // Query 1: The Attackers (Looking for a target)
+    mut attackers: Query<(Entity, &Position, &Team, &AttackStats, &mut Target)>,
+    // Query 2: The Defenders (Everyone on the board who has Health)
+    defenders: Query<(Entity, &Position, &Team), With<Health>>,
+) {
+    for (attacker_ent, attacker_pos, attacker_team, attack_stats, mut target) in
+        attackers.iter_mut()
+    {
+        // If they already have a target, skip the scanning math to save CPU
+        if target.0.is_some() {
+            continue;
+        }
+
+        let mut closest_enemy = None;
+        let mut closest_dist = f32::MAX;
+
+        // Scan every other unit on the board
+        for (defender_ent, defender_pos, defender_team) in defenders.iter() {
+            // Only look at the enemy team!
+            if attacker_team != defender_team {
+                // Calculate distance using the Pythagorean theorem, converted to Float Tiles
+                let dx = (attacker_pos.x - defender_pos.x) as f32 / 1000.0;
+                let dy = (attacker_pos.y - defender_pos.y) as f32 / 1000.0;
+                let dist = (dx * dx + dy * dy).sqrt();
+
+                if dist < closest_dist {
+                    closest_dist = dist;
+                    closest_enemy = Some(defender_ent);
+                }
+            }
+        }
+
+        // If we found an enemy, and they are inside our attack range... LOCK ON!
+        if let Some(enemy_ent) = closest_enemy {
+            if closest_dist <= attack_stats.range {
+                target.0 = Some(enemy_ent);
+                println!(
+                    "Entity {:?} Locked onto Enemy {:?} at distance {:.2}",
+                    attacker_ent, enemy_ent, closest_dist
+                );
+            }
+        }
+    }
+}
+
+pub fn combat_damage_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    // The Attackers: We need their clock, their damage stats, and their target ID
+    mut attackers: Query<(Entity, &mut AttackTimer, &AttackStats, &mut Target)>,
+    // The Defenders: We just need to modify their Health
+    mut defenders: Query<&mut Health>,
+) {
+    for (attacker_ent, mut timer, stats, mut target) in attackers.iter_mut() {
+        // 1. If they don't have a target, skip them!
+        let target_entity = match target.0 {
+            Some(ent) => ent,
+            None => continue,
+        };
+
+        // 2. Tick the attack animation clock
+        timer.0.tick(time.delta());
+
+        // 3. If the clock just finished (e.g., 1.2 seconds elapsed)
+        if timer.0.just_finished() {
+            // Try to find the target's Health in the engine
+            if let Ok(mut defender_health) = defenders.get_mut(target_entity) {
+                // SWING THE SWORD!
+                defender_health.0 -= stats.damage;
+                println!(
+                    "Entity {:?} hit {:?} for {} damage! (Target HP: {})",
+                    attacker_ent, target_entity, stats.damage, defender_health.0
+                );
+
+                // DID THE TARGET DIE?
+                if defender_health.0 <= 0 {
+                    println!("Entity {:?} was SLAIN!", target_entity);
+
+                    // A. Delete the dead body from the game memory
+                    commands.entity(target_entity).despawn();
+
+                    // B. Clear the attacker's target so they start walking again!
+                    target.0 = None;
+                }
+            } else {
+                // If we couldn't find the target's health, it means they are already dead
+                // (maybe another troop killed them first!). Clear the target.
+                target.0 = None;
+            }
+        }
     }
 }
