@@ -272,26 +272,61 @@ pub fn spawn_entity_system(
 
 pub fn physics_movement_system(
     time: Res<Time>,
-    // We add &Target to the query so we know if they are fighting!
-    mut query: Query<(&mut Position, &Velocity, &Team, &Target), Without<DeployTimer>>,
+    mut movers: Query<
+        (
+            Entity,
+            &mut Position,
+            &Velocity,
+            &Team,
+            &Target,
+            &AttackStats,
+        ),
+        Without<DeployTimer>,
+    >,
 ) {
-    // time.delta_seconds() ensures movement is tied to actual time, not frame rate!
     let delta_time = time.delta_seconds();
 
-    for (mut pos, velocity, team, target) in query.iter_mut() {
-        // --- NEW LINE: If we have a target, STAND STILL! ---
-        if target.0.is_some() {
-            continue;
-        }
+    // Pass 1: Snapshot all current positions into a HashMap so we can look up targets
+    // without needing a second (conflicting) query.
+    let position_snapshot: std::collections::HashMap<Entity, (i32, i32)> = movers
+        .iter()
+        .map(|(ent, pos, _, _, _, _)| (ent, (pos.x, pos.y)))
+        .collect();
 
-        // Calculate how much distance to move this frame
-        // Multiply by 1000 to keep it in our Fixed-Point format
+    // Pass 2: Now iterate mutably and apply movement
+    for (_ent, mut pos, velocity, team, target, attack_stats) in movers.iter_mut() {
         let frame_movement = (velocity.0 as f32 * delta_time) as i32;
 
-        // Player 1 (Blue) walks UP the Y-axis. Player 2 (Red) walks DOWN.
-        match team {
-            Team::Blue => pos.y += frame_movement,
-            Team::Red => pos.y -= frame_movement,
+        match target.0 {
+            Some(target_ent) => {
+                // Look up the target's position from our snapshot
+                if let Some(&(tx, ty)) = position_snapshot.get(&target_ent) {
+                    let dx = (tx - pos.x) as f32 / 1000.0;
+                    let dy = (ty - pos.y) as f32 / 1000.0;
+                    let dist = (dx * dx + dy * dy).sqrt();
+
+                    if dist <= attack_stats.range {
+                        // In range — STAND STILL and fight!
+                        continue;
+                    }
+
+                    // Out of range — CHASE the target!
+                    if dist > 0.01 {
+                        let dir_x = dx / dist;
+                        let dir_y = dy / dist;
+                        pos.x += (dir_x * frame_movement as f32) as i32;
+                        pos.y += (dir_y * frame_movement as f32) as i32;
+                    }
+                }
+                // If target not found in snapshot, ghost target cleanup will handle it
+            }
+            None => {
+                // No target — march toward enemy base
+                match team {
+                    Team::Blue => pos.y += frame_movement,
+                    Team::Red => pos.y -= frame_movement,
+                }
+            }
         }
     }
 }
@@ -428,24 +463,25 @@ pub fn targeting_system(
             }
         }
 
-        // If we found an enemy, and they are inside our attack range... LOCK ON!
+        // If we found an enemy, LOCK ON regardless of distance!
+        // The movement system will handle chasing if they're out of range.
         if let Some(enemy_ent) = closest_enemy {
-            if closest_dist <= attack_stats.range {
-                target.0 = Some(enemy_ent);
+            target.0 = Some(enemy_ent);
 
-                // --- THE FAST PRE-CHARGE ---
+            // Only pre-charge the fast first attack if we're already in striking distance
+            if closest_dist <= attack_stats.range {
                 attack_timer
                     .0
                     .set_duration(std::time::Duration::from_secs_f32(
                         attack_stats.first_attack_sec,
                     ));
                 attack_timer.0.reset();
-
-                println!(
-                    "Entity {:?} Locked on! First strike in {}s",
-                    attacker_ent, attack_stats.first_attack_sec
-                );
             }
+
+            println!(
+                "Entity {:?} Locked onto Enemy {:?} at distance {:.2}",
+                attacker_ent, enemy_ent, closest_dist
+            );
         }
     }
 }
@@ -453,10 +489,16 @@ pub fn targeting_system(
 pub fn combat_damage_system(
     mut commands: Commands,
     time: Res<Time>,
-    mut attackers: Query<(Entity, &mut AttackTimer, &AttackStats, &mut Target)>,
-    mut defenders: Query<&mut Health>,
+    mut attackers: Query<(
+        Entity,
+        &Position,
+        &mut AttackTimer,
+        &AttackStats,
+        &mut Target,
+    )>,
+    mut defenders: Query<(&Position, &mut Health)>,
 ) {
-    for (attacker_ent, mut timer, stats, mut target) in attackers.iter_mut() {
+    for (attacker_ent, attacker_pos, mut timer, stats, mut target) in attackers.iter_mut() {
         let target_entity = match target.0 {
             Some(ent) => ent,
             None => continue,
@@ -468,17 +510,29 @@ pub fn combat_damage_system(
             continue;
         }
 
+        // --- RANGE CHECK: Only tick the attack clock if we're in striking distance ---
+        // If out of range, DON'T drop the target — the movement system will chase.
+        // We just skip damage this frame so the timer doesn't tick while we're running.
+        if let Ok((defender_pos, _)) = defenders.get(target_entity) {
+            let dx = (attacker_pos.x - defender_pos.x) as f32 / 1000.0;
+            let dy = (attacker_pos.y - defender_pos.y) as f32 / 1000.0;
+            let dist = (dx * dx + dy * dy).sqrt();
+
+            if dist > stats.range {
+                continue; // Out of range — don't attack, but keep the lock!
+            }
+        }
+
         // Tick the attack animation clock
         timer.0.tick(time.delta());
 
         if timer.0.just_finished() {
             // --- THE COOLDOWN RESET ---
-            // The quick strike is over. Set the timer back to the normal, slow hit speed!
             timer.0.set_duration(std::time::Duration::from_secs_f32(
                 stats.hit_speed_ms as f32 / 1000.0,
             ));
 
-            if let Ok(mut defender_health) = defenders.get_mut(target_entity) {
+            if let Ok((_, mut defender_health)) = defenders.get_mut(target_entity) {
                 defender_health.0 -= stats.damage;
                 println!(
                     "Entity {:?} hit {:?} for {} damage! (Target HP: {})",
