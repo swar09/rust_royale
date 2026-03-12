@@ -6,13 +6,15 @@ use rust_royale::components::{PlayerState, SpawnRequest, Team};
 use rust_royale::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 use rust_royale::stats::{GameStats, GlobalStats};
 use rust_royale::systems::{
-    combat_damage_system, draw_debug_grid, draw_entities, mouse_interaction,
-    physics_movement_system, setup_camera, spawn_entity_system, targeting_system, window_controls,
+    combat_damage_system, deployment_system, draw_debug_grid, draw_entities, mouse_interaction,
+    physics_movement_system, setup_camera, spawn_entity_system, targeting_system,
+    troop_collision_system, window_controls,
 };
 
 // --- CUSTOM SANDBOX SYSTEM: Dual-Wielding Spawners! ---
 fn sandbox_mouse_clicks(
     buttons: Res<ButtonInput<MouseButton>>,
+    keyboard: Res<ButtonInput<KeyCode>>,
     window_query: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
     mut spawn_events: EventWriter<SpawnRequest>,
@@ -42,8 +44,17 @@ fn sandbox_mouse_clicks(
                 // Left Click = Blue Team, Right Click = Red Team!
                 let team = if left_click { Team::Blue } else { Team::Red };
 
+                // Hold 1 = Knight, 2 = Valkyrie, 3 = Baby Dragon (default: Knight)
+                let card_key = if keyboard.pressed(KeyCode::Digit2) {
+                    "valkyrie"
+                } else if keyboard.pressed(KeyCode::Digit3) {
+                    "baby_dragon"
+                } else {
+                    "knight"
+                };
+
                 spawn_events.send(SpawnRequest {
-                    card_key: "knight".to_string(),
+                    card_key: card_key.to_string(),
                     team,
                     grid_x,
                     grid_y,
@@ -79,9 +90,11 @@ fn main() {
                 window_controls,
                 sandbox_mouse_clicks, // Use our special dual-clicker!
                 spawn_entity_system,
+                deployment_system,       // <-- Ticks the clock and wakes them up
                 targeting_system,        // 1. Find a target
                 combat_damage_system,    // 2. Swing the sword and kill them
                 physics_movement_system, // 3. Walk forward (if target is dead)
+                troop_collision_system,  // 4. Push apart if overlapping!
                 draw_entities,
             ),
         )

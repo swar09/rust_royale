@@ -51,8 +51,30 @@ pub struct AttackStats {
     pub damage: i32,
     pub range: f32, // Stored as tiles (e.g., 1.2)
     pub hit_speed_ms: u32,
+    pub first_attack_sec: f32,
 }
 
 // A Bevy stopwatch to ensure they only swing the sword every X seconds
 #[derive(Component, Debug)]
 pub struct AttackTimer(pub Timer);
+
+// A countdown timer for when a troop is first dropped
+#[derive(Component, Debug)]
+pub struct DeployTimer(pub Timer);
+
+// Stores the physical footprint and weight for collision pushing
+#[derive(Component, Debug)]
+pub struct PhysicalBody {
+    pub radius: i32, // Stored in fixed-point math (1000 = 1 tile)
+    pub mass: i32,
+}
+
+// Defines what this unit is, and what it is allowed to attack
+#[derive(Component, Debug)]
+pub struct TargetingProfile {
+    pub is_flying: bool,
+    pub is_building: bool,
+    pub targets_air: bool,
+    pub targets_ground: bool,
+    pub preference: crate::stats::TargetPreference,
+}

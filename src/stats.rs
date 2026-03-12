@@ -47,6 +47,8 @@ pub struct BuildingStats {
     pub health: i32,
     pub damage: i32,
     pub hit_speed_ms: u32,
+    pub deploy_time_sec: f32,
+    pub first_attack_sec: f32,
     pub range_max: f32, // Changed from 'range' to support the Mortar logic
     pub footprint_x: usize,
     pub footprint_y: usize,
@@ -67,6 +69,8 @@ pub struct TroopStats {
     pub health: i32,
     pub damage: i32,
     pub hit_speed_ms: u32,
+    pub deploy_time_sec: f32,
+    pub first_attack_sec: f32,
 
     // Using our strict Enums!
     pub speed: SpeedTier,
