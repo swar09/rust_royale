@@ -49,7 +49,17 @@ pub fn calculate_a_star(
 
     cost_so_far.insert(start, 0);
 
-    let directions = [(0, 1), (1, 0), (0, -1), (-1, 0)];
+    // Restore the diagonals so they can walk the hypotenuse!
+    let directions = [
+        (0, 1),
+        (1, 0),
+        (0, -1),
+        (-1, 0), // Up, Right, Down, Left
+        (1, 1),
+        (1, -1),
+        (-1, 1),
+        (-1, -1), // The 4 Diagonals
+    ];
 
     let mut best_node = goal;
 
