@@ -57,4 +57,15 @@ impl ArenaGrid {
             }
         }
     }
+
+    /// Converts tower tiles back to Grass when a tower is destroyed
+    pub fn clear_tower(&mut self, start_x: usize, start_y: usize, size: usize) {
+        for y in start_y..start_y + size {
+            for x in start_x..start_x + size {
+                if x < ARENA_WIDTH && y < ARENA_HEIGHT {
+                    self.tiles[y * ARENA_WIDTH + x] = TileType::Grass;
+                }
+            }
+        }
+    }
 }

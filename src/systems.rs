@@ -1,7 +1,8 @@
 use crate::arena::{ArenaGrid, TileType};
 use crate::components::{
-    AttackStats, AttackTimer, DeployTimer, Health, PhysicalBody, PlayerState, Position,
-    SpawnRequest, Target, TargetingProfile, Team, Velocity, WaypointPath,
+    AttackStats, AttackTimer, DeployTimer, Health, MatchPhase, MatchState, PhysicalBody, Position,
+    SpawnRequest, Target, TargetingProfile, Team, TowerFootprint, TowerType, Velocity,
+    WaypointPath,
 };
 use crate::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 use crate::pathfinding::calculate_a_star;
@@ -157,43 +158,156 @@ pub fn handle_mouse_clicks(
     }
 }
 
-pub fn elixir_generation_system(time: Res<Time>, mut player_state: ResMut<PlayerState>) {
-    // 1 Elixir every 2.8 seconds = ~0.357 Elixir per second
-    let generation_rate = 1.0 / 2.8;
-
-    // time.delta_seconds() ensures it is perfectly tied to the clock, not frame rate
-    player_state.elixir += generation_rate * time.delta_seconds();
-
-    // The strict 10.0 cap
-    if player_state.elixir > 10.0 {
-        player_state.elixir = 10.0;
+pub fn match_manager_system(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut match_state: ResMut<MatchState>,
+    mut grid: ResMut<ArenaGrid>,
+    towers: Query<(Entity, &Health, &Team, &TowerType, &TowerFootprint)>,
+) {
+    if match_state.phase == MatchPhase::GameOver {
+        return;
     }
+
+    let delta = time.delta_seconds();
+    match_state.clock_seconds -= delta;
+
+    // Phase Transitions
+    if match_state.phase == MatchPhase::Regular && match_state.clock_seconds <= 60.0 {
+        match_state.phase = MatchPhase::DoubleElixir;
+        println!("🕒 60 SECONDS LEFT: DOUBLE ELIXIR!");
+    } else if match_state.clock_seconds <= 0.0 {
+        if match_state.phase == MatchPhase::DoubleElixir {
+            if match_state.blue_crowns == match_state.red_crowns {
+                match_state.phase = MatchPhase::Overtime;
+                match_state.clock_seconds = 60.0; // 1 Minute of Overtime
+                println!("⚔️ OVERTIME! SUDDEN DEATH!");
+            } else {
+                match_state.phase = MatchPhase::GameOver;
+                match_state.clock_seconds = 0.0;
+                println!(
+                    "🛑 MATCH OVER! Final Score: {}-{}",
+                    match_state.blue_crowns, match_state.red_crowns
+                );
+            }
+        } else if match_state.phase == MatchPhase::Overtime {
+            // --- TIEBREAKER: Destroy the tower with the lowest HP ---
+            match_state.clock_seconds = 0.0;
+
+            let mut weakest: Option<(Entity, i32, Team, u8, TowerFootprint)> = None;
+
+            for (entity, health, team, tower_type, footprint) in towers.iter() {
+                let crowns_worth = match tower_type {
+                    TowerType::Princess => 1_u8,
+                    TowerType::King => 3_u8,
+                };
+
+                let is_weaker = match &weakest {
+                    None => true,
+                    Some((_, lowest_hp, _, _, _)) => health.0 < *lowest_hp,
+                };
+
+                if is_weaker {
+                    weakest = Some((
+                        entity,
+                        health.0,
+                        *team,
+                        crowns_worth,
+                        TowerFootprint {
+                            start_x: footprint.start_x,
+                            start_y: footprint.start_y,
+                            size: footprint.size,
+                        },
+                    ));
+                }
+            }
+
+            if let Some((entity, hp, team, crowns, footprint)) = weakest {
+                commands.entity(entity).despawn();
+                grid.clear_tower(footprint.start_x, footprint.start_y, footprint.size);
+
+                if team == Team::Red {
+                    if crowns == 3 {
+                        match_state.blue_crowns = 3; // King Tower guarantees exactly 3 crowns
+                    } else {
+                        match_state.blue_crowns = (match_state.blue_crowns + crowns).min(3);
+                    }
+                } else {
+                    if crowns == 3 {
+                        match_state.red_crowns = 3; // King Tower guarantees exactly 3 crowns
+                    } else {
+                        match_state.red_crowns = (match_state.red_crowns + crowns).min(3);
+                    }
+                }
+
+                println!(
+                    "⚖️ TIEBREAKER! Destroyed {:?} tower with {} HP! Score: {}-{}",
+                    team, hp, match_state.blue_crowns, match_state.red_crowns
+                );
+            } else {
+                println!("⚖️ TIEBREAKER: No towers remain — it's a DRAW!");
+            }
+
+            match_state.phase = MatchPhase::GameOver;
+            println!("🛑 MATCH OVER!");
+        }
+    }
+
+    // Elixir Generation
+    let multiplier = match match_state.phase {
+        MatchPhase::Regular => 1.0,
+        _ => 2.0, // DoubleElixir and Overtime are both 2x
+    };
+
+    let elixir_gain = (1.0 / 2.8) * multiplier * delta;
+
+    match_state.blue_elixir = (match_state.blue_elixir + elixir_gain).min(10.0);
+    match_state.red_elixir = (match_state.red_elixir + elixir_gain).min(10.0);
 }
 
 pub fn spawn_entity_system(
     mut commands: Commands,
     mut spawn_requests: EventReader<SpawnRequest>,
     global_stats: Res<GlobalStats>,
-    mut player_state: ResMut<PlayerState>,
+    mut match_state: ResMut<MatchState>,
 ) {
+    if match_state.phase == MatchPhase::GameOver {
+        return; // No spawning after the game ends!
+    }
+
     for request in spawn_requests.read() {
         if let Some(troop_data) = global_stats.0.troops.get(&request.card_key) {
-            // --- THE VALIDATION GATE ---
             let cost = troop_data.elixir_cost as f32;
 
-            if player_state.elixir < cost {
+            // --- DUAL ECONOMY VALIDATION ---
+            let (current_elixir, team_name) = match request.team {
+                Team::Blue => (match_state.blue_elixir, "Blue"),
+                Team::Red => (match_state.red_elixir, "Red"),
+            };
+
+            if current_elixir < cost {
                 println!(
-                    "ERROR: Not enough Elixir! Need {}, but only have {:.1}",
-                    cost, player_state.elixir
+                    "ERROR: {} Team needs {} Elixir, but only has {:.1}",
+                    team_name, cost, current_elixir
                 );
                 continue;
             }
 
-            // --- THE TRANSACTION ---
-            player_state.elixir -= cost;
+            // Deduct from the correct bank
+            if request.team == Team::Blue {
+                match_state.blue_elixir -= cost;
+            } else {
+                match_state.red_elixir -= cost;
+            }
             println!(
-                "Spent {} Elixir. Remaining: {:.1}",
-                cost, player_state.elixir
+                "Spent {} Elixir from {} Team. Remaining: {:.1}",
+                cost,
+                team_name,
+                if request.team == Team::Blue {
+                    match_state.blue_elixir
+                } else {
+                    match_state.red_elixir
+                }
             );
 
             // Convert grid coordinates to fixed-point center-of-tile coordinates
@@ -275,6 +389,7 @@ pub fn spawn_entity_system(
 
 pub fn physics_movement_system(
     time: Res<Time>,
+    match_state: Res<MatchState>,
     grid: Res<crate::arena::ArenaGrid>, // <-- 1. Read the Map
     // We use a ParamSet here because we need to query the Position of ALL entities (like Towers),
     // but simultaneously need to mutably query Position for the movers. ParamSet avoids the conflict!
@@ -295,6 +410,10 @@ pub fn physics_movement_system(
         >,
     )>,
 ) {
+    if match_state.phase == MatchPhase::GameOver {
+        return; // Freeze all movement when the match ends!
+    }
+
     let delta_time = time.delta_seconds();
 
     // Pass 1: Snapshot ALL current positions (and radii for buildings) into a HashMap
@@ -559,17 +678,27 @@ pub fn setup_ui(mut commands: Commands) {
 }
 
 pub fn update_elixir_ui(
-    player_state: Res<PlayerState>, // Read bank account
+    match_state: Res<MatchState>, // Read the match state
     // Find exactly ONE mutable text component that also has our marker tag
     mut query: Query<&mut Text, With<crate::components::ElixirUIText>>,
 ) {
     if let Ok(mut text) = query.get_single_mut() {
-        // Update the string on screen! {:.1} rounds it to 1 decimal place (e.g. 5.4)
-        text.sections[0].value = format!("Elixir: {:.1}", player_state.elixir);
+        let minutes = (match_state.clock_seconds / 60.0) as u32;
+        let seconds = (match_state.clock_seconds % 60.0) as u32;
+        text.sections[0].value = format!(
+            "⏱ {}:{:02} | 💧 Blue: {:.1} | 🔴 Red: {:.1} | 👑 {}-{}",
+            minutes,
+            seconds,
+            match_state.blue_elixir,
+            match_state.red_elixir,
+            match_state.blue_crowns,
+            match_state.red_crowns
+        );
     }
 }
 
 pub fn targeting_system(
+    match_state: Res<MatchState>,
     mut attackers: Query<
         (
             Entity,
@@ -585,6 +714,9 @@ pub fn targeting_system(
     >,
     defenders: Query<(Entity, &Position, &Team, &TargetingProfile), With<Health>>,
 ) {
+    if match_state.phase == MatchPhase::GameOver {
+        return; // No target scanning after the game ends!
+    }
     for (
         attacker_ent,
         attacker_pos,
@@ -709,6 +841,8 @@ pub fn targeting_system(
 pub fn combat_damage_system(
     mut commands: Commands,
     time: Res<Time>,
+    mut match_state: ResMut<MatchState>,
+    mut grid: ResMut<ArenaGrid>,
     mut attackers: Query<(
         Entity,
         &Position,
@@ -717,8 +851,18 @@ pub fn combat_damage_system(
         &mut Target,
         &mut WaypointPath,
     )>,
-    mut defenders: Query<(&Position, &mut Health, Option<&PhysicalBody>)>,
+    mut defenders: Query<(
+        &Position,
+        &mut Health,
+        Option<&PhysicalBody>,
+        Option<&TowerType>,
+        Option<&TowerFootprint>,
+        &Team,
+    )>,
 ) {
+    if match_state.phase == MatchPhase::GameOver {
+        return; // No combat after the game ends!
+    }
     for (attacker_ent, attacker_pos, mut timer, stats, mut target, mut path) in attackers.iter_mut()
     {
         let target_entity = match target.0 {
@@ -736,7 +880,7 @@ pub fn combat_damage_system(
         // --- RANGE CHECK: Only tick the attack clock if we're in striking distance ---
         // If out of range, DON'T drop the target — the movement system will chase.
         // We just skip damage this frame so the timer doesn't tick while we're running.
-        if let Ok((defender_pos, _, defender_body)) = defenders.get(target_entity) {
+        if let Ok((defender_pos, _, defender_body, _, _, _)) = defenders.get(target_entity) {
             let dx = (attacker_pos.x - defender_pos.x) as f32 / 1000.0;
             let dy = (attacker_pos.y - defender_pos.y) as f32 / 1000.0;
             let center_dist = (dx * dx + dy * dy).sqrt();
@@ -758,7 +902,9 @@ pub fn combat_damage_system(
                 stats.hit_speed_ms as f32 / 1000.0,
             ));
 
-            if let Ok((_, mut defender_health, _)) = defenders.get_mut(target_entity) {
+            if let Ok((_, mut defender_health, _, tower_type, tower_footprint, defender_team)) =
+                defenders.get_mut(target_entity)
+            {
                 defender_health.0 -= stats.damage;
                 println!(
                     "Entity {:?} hit {:?} for {} damage! (Target HP: {})",
@@ -769,6 +915,50 @@ pub fn combat_damage_system(
                     println!("Entity {:?} was SLAIN!", target_entity);
                     commands.entity(target_entity).despawn();
                     target.0 = None;
+                    path.0.clear(); // BUG FIX: Clear stale waypoints so the troop recalculates!
+
+                    // --- TOWER TILE CLEANUP ---
+                    if let Some(footprint) = tower_footprint {
+                        grid.clear_tower(footprint.start_x, footprint.start_y, footprint.size);
+                    }
+
+                    // --- CROWN LOGIC ---
+                    if let Some(tower) = tower_type {
+                        if *defender_team == Team::Red {
+                            if matches!(tower, TowerType::King) {
+                                match_state.blue_crowns = 3; // King Tower instantly sets score to 3
+                            } else {
+                                match_state.blue_crowns = (match_state.blue_crowns + 1).min(3);
+                            }
+                        } else {
+                            if matches!(tower, TowerType::King) {
+                                match_state.red_crowns = 3; // King Tower instantly sets score to 3
+                            } else {
+                                match_state.red_crowns = (match_state.red_crowns + 1).min(3);
+                            }
+                        }
+
+                        println!(
+                            "👑 TOWER DOWN! Score: {}-{}",
+                            match_state.blue_crowns, match_state.red_crowns
+                        );
+
+                        // Sudden Death Check or King Tower Kill
+                        if matches!(tower, TowerType::King)
+                            || match_state.phase == MatchPhase::Overtime
+                        {
+                            match_state.phase = MatchPhase::GameOver;
+                            let winner = if *defender_team == Team::Red {
+                                "BLUE"
+                            } else {
+                                "RED"
+                            };
+                            println!(
+                                "🛑 MATCH OVER BY KNOCKOUT! {} TEAM WINS! {}-{}",
+                                winner, match_state.blue_crowns, match_state.red_crowns
+                            );
+                        }
+                    }
                 }
             }
         }
@@ -791,6 +981,7 @@ pub fn deployment_system(
 }
 
 pub fn troop_collision_system(
+    grid: Res<ArenaGrid>,
     // We only want to push things that have both a Position and a PhysicalBody
     mut query: Query<(&mut Position, &PhysicalBody, &TargetingProfile, &Team)>,
 ) {
@@ -854,13 +1045,60 @@ pub fn troop_collision_system(
                 0.8 // Hard collision for enemies (physically blocks walking)
             };
 
-            // Push A away from B
-            pos_a.x += (dir_x * overlap * push_ratio_a * push_force) as i32;
-            pos_a.y += (dir_y * overlap * push_ratio_a * push_force) as i32;
+            // Calculate the push deltas
+            let push_ax = (dir_x * overlap * push_ratio_a * push_force) as i32;
+            let push_ay = (dir_y * overlap * push_ratio_a * push_force) as i32;
+            let push_bx = (dir_x * overlap * push_ratio_b * push_force) as i32;
+            let push_by = (dir_y * overlap * push_ratio_b * push_force) as i32;
 
-            // Push B away from A (Notice the minus signs to push the opposite way!)
-            pos_b.x -= (dir_x * overlap * push_ratio_b * push_force) as i32;
-            pos_b.y -= (dir_y * overlap * push_ratio_b * push_force) as i32;
+            // --- BUG FIX: Validate pushed positions against terrain ---
+            // Only apply the push if the destination tile is walkable.
+            // This prevents troops from being shoved onto River or Tower tiles and getting stuck.
+            let new_ax = pos_a.x + push_ax;
+            let new_ay = pos_a.y + push_ay;
+            let grid_ax = new_ax / 1000;
+            let grid_ay = new_ay / 1000;
+
+            if grid_ax >= 0
+                && grid_ax < crate::constants::ARENA_WIDTH as i32
+                && grid_ay >= 0
+                && grid_ay < crate::constants::ARENA_HEIGHT as i32
+            {
+                let tile_a = &grid.tiles
+                    [(grid_ay * crate::constants::ARENA_WIDTH as i32 + grid_ax) as usize];
+                let can_walk_a = match tile_a {
+                    TileType::River => profile_a.is_flying,
+                    TileType::Tower => false,
+                    _ => true,
+                };
+                if can_walk_a {
+                    pos_a.x = new_ax;
+                    pos_a.y = new_ay;
+                }
+            }
+
+            let new_bx = pos_b.x - push_bx;
+            let new_by = pos_b.y - push_by;
+            let grid_bx = new_bx / 1000;
+            let grid_by = new_by / 1000;
+
+            if grid_bx >= 0
+                && grid_bx < crate::constants::ARENA_WIDTH as i32
+                && grid_by >= 0
+                && grid_by < crate::constants::ARENA_HEIGHT as i32
+            {
+                let tile_b = &grid.tiles
+                    [(grid_by * crate::constants::ARENA_WIDTH as i32 + grid_bx) as usize];
+                let can_walk_b = match tile_b {
+                    TileType::River => profile_b.is_flying,
+                    TileType::Tower => false,
+                    _ => true,
+                };
+                if can_walk_b {
+                    pos_b.x = new_bx;
+                    pos_b.y = new_by;
+                }
+            }
         }
     }
 }
@@ -871,16 +1109,44 @@ pub fn spawn_towers_system(mut commands: Commands, global_stats: Res<GlobalStats
 
     let towers = vec![
         // Player Side (Blue)
-        ("princess_tower", Team::Blue, 2, 5, princess_data),
-        ("princess_tower", Team::Blue, 13, 5, princess_data),
-        ("king_tower", Team::Blue, 7, 1, king_data),
+        (
+            "princess_tower",
+            Team::Blue,
+            2,
+            5,
+            princess_data,
+            TowerType::Princess,
+        ),
+        (
+            "princess_tower",
+            Team::Blue,
+            13,
+            5,
+            princess_data,
+            TowerType::Princess,
+        ),
+        ("king_tower", Team::Blue, 7, 1, king_data, TowerType::King),
         // Opponent Side (Red)
-        ("princess_tower", Team::Red, 2, 24, princess_data),
-        ("princess_tower", Team::Red, 13, 24, princess_data),
-        ("king_tower", Team::Red, 7, 27, king_data),
+        (
+            "princess_tower",
+            Team::Red,
+            2,
+            24,
+            princess_data,
+            TowerType::Princess,
+        ),
+        (
+            "princess_tower",
+            Team::Red,
+            13,
+            24,
+            princess_data,
+            TowerType::Princess,
+        ),
+        ("king_tower", Team::Red, 7, 27, king_data, TowerType::King),
     ];
 
-    for (name, team, start_x, start_y, data) in towers {
+    for (name, team, start_x, start_y, data, tower_type) in towers {
         // Calculate center precisely based on footprint
         let size_x = data.footprint_x as f32;
         let size_y = data.footprint_y as f32;
@@ -892,6 +1158,7 @@ pub fn spawn_towers_system(mut commands: Commands, global_stats: Res<GlobalStats
         let fixed_y = (center_float_y * 1000.0) as i32;
 
         let collision_radius = (data.footprint_x as i32 * 1000) / 2;
+        let footprint_size = data.footprint_x as usize; // Towers are square (3x3 or 4x4)
 
         commands.spawn((
             Position {
@@ -921,6 +1188,12 @@ pub fn spawn_towers_system(mut commands: Commands, global_stats: Res<GlobalStats
                 targets_air: true,
                 targets_ground: true,
                 preference: crate::stats::TargetPreference::Any,
+            },
+            tower_type,
+            TowerFootprint {
+                start_x: start_x as usize,
+                start_y: start_y as usize,
+                size: footprint_size,
             },
         ));
 

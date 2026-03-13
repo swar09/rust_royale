@@ -2,13 +2,14 @@ use bevy::prelude::*;
 use std::fs;
 
 use rust_royale::arena::ArenaGrid;
-use rust_royale::components::{PlayerState, SpawnRequest, Team};
+use rust_royale::components::{MatchState, SpawnRequest, Team};
 use rust_royale::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 use rust_royale::stats::{GameStats, GlobalStats};
 use rust_royale::systems::{
-    combat_damage_system, deployment_system, draw_debug_grid, draw_entities, mouse_interaction,
-    physics_movement_system, setup_camera, spawn_entity_system, spawn_towers_system,
-    targeting_system, troop_collision_system, window_controls,
+    combat_damage_system, deployment_system, draw_debug_grid, draw_entities, match_manager_system,
+    mouse_interaction, physics_movement_system, setup_camera, setup_ui, spawn_entity_system,
+    spawn_towers_system, targeting_system, troop_collision_system, update_elixir_ui,
+    window_controls,
 };
 
 // --- CUSTOM SANDBOX SYSTEM: Dual-Wielding Spawners! ---
@@ -78,23 +79,24 @@ fn main() {
         }))
         .insert_resource(ArenaGrid::new())
         .insert_resource(GlobalStats(parsed_stats))
-        // INFINITE ELIXIR FOR TESTING!
-        .insert_resource(PlayerState { elixir: 1000.0 })
+        .insert_resource(MatchState::default())
         .add_event::<SpawnRequest>()
-        .add_systems(Startup, (setup_camera, spawn_towers_system))
+        .add_systems(Startup, (setup_camera, spawn_towers_system, setup_ui))
         .add_systems(
             Update,
             (
                 draw_debug_grid,
-                mouse_interaction, // <-- Re-added the yellow highlight!
+                mouse_interaction,
                 window_controls,
-                sandbox_mouse_clicks, // Use our special dual-clicker!
+                sandbox_mouse_clicks,
+                match_manager_system, // <-- THE NEW CLOCK AND ECONOMY
                 spawn_entity_system,
-                deployment_system,       // <-- Ticks the clock and wakes them up
-                targeting_system,        // 1. Find a target
-                combat_damage_system,    // 2. Swing the sword and kill them
-                physics_movement_system, // 3. Walk forward (if target is dead)
-                troop_collision_system,  // 4. Push apart if overlapping!
+                deployment_system,
+                targeting_system,
+                combat_damage_system,
+                physics_movement_system,
+                troop_collision_system,
+                update_elixir_ui, // <-- SHOWS CLOCK, ELIXIR, AND CROWNS
                 draw_entities,
             ),
         )

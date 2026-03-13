@@ -32,10 +32,53 @@ pub struct SpawnRequest {
 #[derive(Component, Debug)]
 pub struct Velocity(pub i32);
 
-// The global state for the player's economy
+// The different phases of a 3-minute match
+#[derive(Debug, Clone, PartialEq, Default)]
+pub enum MatchPhase {
+    #[default]
+    Regular, // First 2 minutes (1x Elixir)
+    DoubleElixir, // Last 1 minute (2x Elixir)
+    Overtime,     // Sudden Death (2x Elixir)
+    GameOver,     // Match has ended
+}
+
+// The global state for the entire match
 #[derive(Resource, Debug)]
-pub struct PlayerState {
-    pub elixir: f32, // Continuous float, capped at 10.0
+pub struct MatchState {
+    pub phase: MatchPhase,
+    pub clock_seconds: f32, // Starts at 180.0 (3 minutes)
+    pub blue_elixir: f32,   // Capped at 10.0
+    pub red_elixir: f32,    // Capped at 10.0
+    pub blue_crowns: u8,
+    pub red_crowns: u8,
+}
+
+impl Default for MatchState {
+    fn default() -> Self {
+        Self {
+            phase: MatchPhase::Regular,
+            clock_seconds: 180.0,
+            blue_elixir: 5.0, // Standard starting elixir
+            red_elixir: 5.0,
+            blue_crowns: 0,
+            red_crowns: 0,
+        }
+    }
+}
+
+// Tags towers so the combat system knows when to award crowns
+#[derive(Component, Debug)]
+pub enum TowerType {
+    Princess,
+    King,
+}
+
+// Stores the grid origin and size so we can clear ArenaGrid tiles on destruction
+#[derive(Component, Debug)]
+pub struct TowerFootprint {
+    pub start_x: usize,
+    pub start_y: usize,
+    pub size: usize,
 }
 
 #[derive(Component)]
