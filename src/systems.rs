@@ -325,10 +325,51 @@ pub fn physics_movement_system(
                     }
 
                     if dist > 0.01 {
-                        let dir_x = dx / dist;
-                        let dir_y = dy / dist;
-                        move_x = (dir_x * frame_movement as f32) as i32;
-                        move_y = (dir_y * frame_movement as f32) as i32;
+                        let target_grid = (tx / 1000, ty / 1000);
+
+                        // If we don't have a route yet, calculate one to the enemy!
+                        if path.0.is_empty() {
+                            let start_grid = (pos.x / 1000, pos.y / 1000);
+
+                            // Ask A* to get us into attack range! If we are targeting a Princess Tower,
+                            // we just need to path to a tile that is attack_stats.range away!
+                            let range_tiles = attack_stats.range as i32;
+
+                            if let Some(new_route) = calculate_a_star(
+                                &grid,
+                                start_grid,
+                                target_grid,
+                                profile.is_flying,
+                                range_tiles.max(1),
+                            ) {
+                                path.0 = new_route;
+                            }
+                        }
+
+                        // Just like the GPS 'none' route, perfectly follow the path!
+                        if let Some(&(target_grid_x, target_grid_y)) = path.0.first() {
+                            let target_world_x = (target_grid_x * 1000) + 500;
+                            let target_world_y = (target_grid_y * 1000) + 500;
+
+                            let wdx = (target_world_x - pos.x) as f32;
+                            let wdy = (target_world_y - pos.y) as f32;
+                            let w_dist = (wdx * wdx + wdy * wdy).sqrt();
+
+                            if w_dist < 250.0 {
+                                path.0.remove(0); // Arrived! Cross waypoint off.
+                            } else {
+                                let dir_x = wdx / w_dist;
+                                let dir_y = wdy / w_dist;
+                                move_x = (dir_x * frame_movement as f32) as i32;
+                                move_y = (dir_y * frame_movement as f32) as i32;
+                            }
+                        } else {
+                            // If A* returned None, brute force walk straight at them (Dumb walk fallback)
+                            let dir_x = dx / dist;
+                            let dir_y = dy / dist;
+                            move_x = (dir_x * frame_movement as f32) as i32;
+                            move_y = (dir_y * frame_movement as f32) as i32;
+                        }
                     }
                 }
             }
@@ -339,14 +380,14 @@ pub fn physics_movement_system(
                 if path.0.is_empty() {
                     let start_grid = (pos.x / 1000, pos.y / 1000);
 
-                    // Set the destination to the enemy King Tower
+                    // Set the destination to the grass tile right IN FRONT of the King Tower
                     let goal_grid = match team {
-                        Team::Blue => (7, 27), // Red King Tower
-                        Team::Red => (7, 1),   // Blue King Tower
+                        Team::Blue => (7, 26), // One tile below the Red King
+                        Team::Red => (7, 2),   // One tile above the Blue King
                     };
 
                     if let Some(new_route) =
-                        calculate_a_star(&grid, start_grid, goal_grid, profile.is_flying)
+                        calculate_a_star(&grid, start_grid, goal_grid, profile.is_flying, 0)
                     {
                         path.0 = new_route;
                         println!(
@@ -368,7 +409,7 @@ pub fn physics_movement_system(
                     let dist = (dx * dx + dy * dy).sqrt();
 
                     // 3. Have we reached the center of the tile?
-                    if dist < 50.0 {
+                    if dist < 250.0 {
                         // Cross it off the list! The next frame will target the next tile.
                         path.0.remove(0);
                     } else {
@@ -518,6 +559,7 @@ pub fn targeting_system(
             &TargetingProfile,
             &mut Target,
             &mut AttackTimer,
+            &mut WaypointPath,
         ),
         Without<DeployTimer>,
     >,
@@ -532,6 +574,7 @@ pub fn targeting_system(
         attacker_profile,
         mut target,
         mut attack_timer,
+        mut path,
     ) in attackers.iter_mut()
     {
         // If they already have a target, skip the scanning math to save CPU
@@ -580,6 +623,7 @@ pub fn targeting_system(
         // The movement system will handle chasing if they're out of range.
         if let Some(enemy_ent) = closest_enemy {
             target.0 = Some(enemy_ent);
+            path.0.clear(); // CLEAR the old King tower path so A* recalculates to the new target!
 
             // Only pre-charge the fast first attack if we're already in striking distance
             if closest_dist <= attack_stats.range {
@@ -608,10 +652,12 @@ pub fn combat_damage_system(
         &mut AttackTimer,
         &AttackStats,
         &mut Target,
+        &mut WaypointPath,
     )>,
     mut defenders: Query<(&Position, &mut Health)>,
 ) {
-    for (attacker_ent, attacker_pos, mut timer, stats, mut target) in attackers.iter_mut() {
+    for (attacker_ent, attacker_pos, mut timer, stats, mut target, mut path) in attackers.iter_mut()
+    {
         let target_entity = match target.0 {
             Some(ent) => ent,
             None => continue,
@@ -620,6 +666,7 @@ pub fn combat_damage_system(
         // --- INSTANT GHOST TARGET CHECK ---
         if defenders.get(target_entity).is_err() {
             target.0 = None;
+            path.0.clear(); // Target is dead, clear the path so we can recalculate!
             continue;
         }
 

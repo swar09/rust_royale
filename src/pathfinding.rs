@@ -36,6 +36,7 @@ pub fn calculate_a_star(
     start: (i32, i32),
     goal: (i32, i32),
     is_flying: bool,
+    attack_range_tiles: i32,
 ) -> Option<Vec<(i32, i32)>> {
     let mut frontier = BinaryHeap::new();
     frontier.push(Node {
@@ -48,20 +49,16 @@ pub fn calculate_a_star(
 
     cost_so_far.insert(start, 0);
 
-    let directions = [
-        (0, 1),
-        (1, 0),
-        (0, -1),
-        (-1, 0),
-        (1, 1),
-        (1, -1),
-        (-1, 1),
-        (-1, -1),
-    ];
+    let directions = [(0, 1), (1, 0), (0, -1), (-1, 0)];
+
+    let mut best_node = goal;
 
     while let Some(current) = frontier.pop() {
-        if current.pos == goal {
-            break; // We found the target!
+        // Stop if we are within range of the goal
+        let dist = heuristic(current.pos, goal);
+        if dist <= attack_range_tiles {
+            best_node = current.pos;
+            break;
         }
 
         for (dx, dy) in directions.iter() {
@@ -112,11 +109,11 @@ pub fn calculate_a_star(
         }
     }
 
-    // Trace the path backward from the goal to the start
+    // Trace the path backward from the best node to the start
     let mut path = Vec::new();
-    let mut current = goal;
+    let mut current = best_node;
 
-    if !came_from.contains_key(&goal) {
+    if current != start && !came_from.contains_key(&current) {
         return None; // No path exists!
     }
 
