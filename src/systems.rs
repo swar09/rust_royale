@@ -234,12 +234,10 @@ pub fn match_manager_system(
                     } else {
                         match_state.blue_crowns = (match_state.blue_crowns + crowns).min(3);
                     }
+                } else if crowns == 3 {
+                    match_state.red_crowns = 3; // King Tower guarantees exactly 3 crowns
                 } else {
-                    if crowns == 3 {
-                        match_state.red_crowns = 3; // King Tower guarantees exactly 3 crowns
-                    } else {
-                        match_state.red_crowns = (match_state.red_crowns + crowns).min(3);
-                    }
+                    match_state.red_crowns = (match_state.red_crowns + crowns).min(3);
                 }
 
                 println!(
@@ -499,7 +497,7 @@ pub fn physics_movement_system(
                             let wdy = (target_world_y - pos.y) as f32;
                             let w_dist = (wdx * wdx + wdy * wdy).sqrt();
 
-                            if w_dist < 250.0 {
+                            if w_dist < 600.0 {
                                 path.0.remove(0);
                             } else {
                                 let dir_x = wdx / w_dist;
@@ -553,7 +551,7 @@ pub fn physics_movement_system(
                     let dist = (dx * dx + dy * dy).sqrt();
 
                     // 3. Have we reached the center of the tile?
-                    if dist < 250.0 {
+                    if dist < 600.0 {
                         // Cross it off the list! The next frame will target the next tile.
                         path.0.remove(0);
                     } else {
@@ -989,12 +987,10 @@ pub fn combat_damage_system(
                             } else {
                                 match_state.blue_crowns = (match_state.blue_crowns + 1).min(3);
                             }
+                        } else if matches!(tower, TowerType::King) {
+                            match_state.red_crowns = 3; // King Tower instantly sets score to 3
                         } else {
-                            if matches!(tower, TowerType::King) {
-                                match_state.red_crowns = 3; // King Tower instantly sets score to 3
-                            } else {
-                                match_state.red_crowns = (match_state.red_crowns + 1).min(3);
-                            }
+                            match_state.red_crowns = (match_state.red_crowns + 1).min(3);
                         }
 
                         println!(
@@ -1268,7 +1264,7 @@ pub fn troop_collision_system(
             // If BOTH A and B were blocked (e.g. they are on a narrow bridge and trying to push sideways into the river),
             // then the sideways fanning failed. In this case, fall back to a standard RADIAL push
             // (along the axis between them) so one pushes the other forward/back to resolve the overlap.
-            if a_blocked && b_blocked && shares_target {
+            if a_blocked && b_blocked && is_same_team {
                 // Standard radial collision axis
                 let r_dir_x = dx / dist;
                 let r_dir_y = dy / dist;
@@ -1344,7 +1340,7 @@ pub fn spawn_towers_system(mut commands: Commands, global_stats: Res<GlobalStats
         let fixed_y = (center_float_y * 1000.0) as i32;
 
         let collision_radius = (data.footprint_x as i32 * 1000) / 2;
-        let footprint_size = data.footprint_x as usize; // Towers are square (3x3 or 4x4)
+        let footprint_size = data.footprint_x; // Towers are square (3x3 or 4x4)
 
         commands.spawn((
             Position {
