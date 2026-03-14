@@ -8,6 +8,7 @@ use crate::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 use crate::pathfinding::calculate_a_star;
 use crate::stats::{GlobalStats, SpeedTier};
 use bevy::{app::AppExit, prelude::*};
+use std::collections::HashMap;
 
 /// Spawns the 2D camera so we can actually see the world
 pub fn setup_camera(mut commands: Commands, mut window_query: Query<&mut Window>) {
@@ -416,9 +417,7 @@ pub fn spawn_entity_system(
 pub fn physics_movement_system(
     time: Res<Time>,
     match_state: Res<MatchState>,
-    grid: Res<crate::arena::ArenaGrid>, // <-- 1. Read the Map
-    // We use a ParamSet here because we need to query the Position of ALL entities (like Towers),
-    // but simultaneously need to mutably query Position for the movers. ParamSet avoids the conflict!
+    grid: Res<crate::arena::ArenaGrid>,
     mut queries: ParamSet<(
         Query<(Entity, &Position, Option<&PhysicalBody>)>,
         Query<
@@ -429,7 +428,7 @@ pub fn physics_movement_system(
                 &Team,
                 &Target,
                 &AttackStats,
-                &TargetingProfile, // <-- 2. Read the unit's traits
+                &TargetingProfile,
                 &mut WaypointPath,
             ),
             Without<DeployTimer>,
@@ -437,20 +436,19 @@ pub fn physics_movement_system(
     )>,
 ) {
     if match_state.phase == MatchPhase::GameOver {
-        return; // Freeze all movement when the match ends!
+        return;
     }
 
     let delta_time = time.delta_seconds();
 
-    // Pass 1: Snapshot ALL current positions (and radii for buildings) into a HashMap
-    let mut position_snapshot: std::collections::HashMap<Entity, (i32, i32, i32)> =
-        std::collections::HashMap::new();
+    // Snapshot ALL current positions (and radii for buildings) into a HashMap
+    let mut position_snapshot: HashMap<Entity, (i32, i32, i32)> = HashMap::new();
     for (ent, pos, body) in queries.p0().iter() {
         let radius = body.map_or(0, |b| b.radius);
         position_snapshot.insert(ent, (pos.x, pos.y, radius));
     }
 
-    // Pass 2: Now iterate mutably and apply movement
+    // Simple movement — always walk straight toward the target.
     for (_ent, mut pos, velocity, team, target, attack_stats, profile, mut path) in
         queries.p1().iter_mut()
     {
@@ -465,7 +463,6 @@ pub fn physics_movement_system(
                     let dx = (tx - pos.x) as f32 / 1000.0;
                     let dy = (ty - pos.y) as f32 / 1000.0;
                     let center_dist = (dx * dx + dy * dy).sqrt();
-                    // Subtract the target's physical radius so we measure to the EDGE, not center!
                     let dist = center_dist - (target_radius as f32 / 1000.0);
 
                     if dist <= attack_stats.range {
@@ -478,11 +475,6 @@ pub fn physics_movement_system(
                         // If we don't have a route yet, calculate one to the enemy!
                         if path.0.is_empty() {
                             let start_grid = (pos.x / 1000, pos.y / 1000);
-
-                            // Ask A* to get us into attack range!
-                            // Buildings are 3x3 or 4x4, so ALL tiles within Manhattan distance 1-2
-                            // of their center are also Tower tiles. We need at least 3 so A*
-                            // can reach a walkable grass tile OUTSIDE the building's footprint.
                             let range_tiles = attack_stats.range as i32;
 
                             if let Some(new_route) = calculate_a_star(
@@ -496,7 +488,7 @@ pub fn physics_movement_system(
                             }
                         }
 
-                        // Just like the GPS 'none' route, perfectly follow the path!
+                        // Follow the GPS path!
                         if let Some(&(target_grid_x, target_grid_y)) = path.0.first() {
                             let target_world_x = (target_grid_x * 1000) + 500;
                             let target_world_y = (target_grid_y * 1000) + 500;
@@ -506,7 +498,7 @@ pub fn physics_movement_system(
                             let w_dist = (wdx * wdx + wdy * wdy).sqrt();
 
                             if w_dist < 250.0 {
-                                path.0.remove(0); // Arrived! Cross waypoint off.
+                                path.0.remove(0);
                             } else {
                                 let dir_x = wdx / w_dist;
                                 let dir_y = wdy / w_dist;
@@ -514,11 +506,7 @@ pub fn physics_movement_system(
                                 move_y = (dir_y * frame_movement as f32) as i32;
                             }
                         } else {
-                            // --- THE WRAP AROUND FIX ---
-                            // If A* returned None (or we reached the end of the path) but we STILL aren't in attack range
-                            // (because a teammate is blocking us), brute force walk straight at the target!
-                            // The collision system will take this forward momentum and convert it into
-                            // lateral sliding, forcing the unit to wrap around the blocking teammate.
+                            // Brute force walk straight at the target
                             let dir_x = dx / center_dist;
                             let dir_y = dy / center_dist;
                             move_x = (dir_x * frame_movement as f32) as i32;
@@ -578,25 +566,17 @@ pub fn physics_movement_system(
         }
 
         // --- THE WALL CHECK ---
-        // Calculate where they WANT to step
         let target_x = pos.x + move_x;
         let target_y = pos.y + move_y;
 
-        // Convert the future fixed-point coordinate to a Grid Tile index
         let grid_x = target_x / 1000;
         let grid_y = target_y / 1000;
 
-        // Ensure they don't walk off the edge of the world
         if grid_x >= 0
             && grid_x < crate::constants::ARENA_WIDTH as i32
             && grid_y >= 0
             && grid_y < crate::constants::ARENA_HEIGHT as i32
         {
-            // --- THE FIX: TRUST THE GPS ---
-            // --- THE FIX: TRUST THE GPS ---
-            // If they have an active A* route, bypass the strict 1-pixel terrain check!
-            // Because you brilliantly added A* to both the Chase and Idle states,
-            // all we have to check is if the path is not empty.
             let is_using_gps = !path.0.is_empty();
 
             if is_using_gps {
@@ -606,7 +586,6 @@ pub fn physics_movement_system(
                 let tile_index = (grid_y * crate::constants::ARENA_WIDTH as i32 + grid_x) as usize;
                 let tile = &grid.tiles[tile_index];
 
-                // Only allow the step if the terrain is valid!
                 let can_walk = match tile {
                     crate::arena::TileType::River => profile.is_flying,
                     crate::arena::TileType::Tower | crate::arena::TileType::Wall => false,
@@ -1003,19 +982,32 @@ pub fn deployment_system(
 
 pub fn troop_collision_system(
     grid: Res<ArenaGrid>,
-    // We only want to push things that have both a Position and a PhysicalBody
-    mut query: Query<(&mut Position, &PhysicalBody, &TargetingProfile, &Team)>,
+    mut queries: ParamSet<(
+        Query<(Entity, &Position)>,
+        Query<(
+            &mut Position,
+            &PhysicalBody,
+            &TargetingProfile,
+            &Team,
+            &Target,
+            &AttackStats,
+        )>,
+    )>,
 ) {
-    // iter_combinations_mut lets us compare every pair of troops exactly once per frame
-    let mut combinations = query.iter_combinations_mut();
+    // Snapshot all positions so we can look up target positions during collision resolution
+    let pos_lookup: HashMap<Entity, (i32, i32)> =
+        queries.p0().iter().map(|(e, p)| (e, (p.x, p.y))).collect();
+
+    let mut p1 = queries.p1();
+    let mut combinations = p1.iter_combinations_mut();
 
     while let Some(
-        [(mut pos_a, body_a, profile_a, team_a), (mut pos_b, body_b, profile_b, team_b)],
+        [(mut pos_a, body_a, profile_a, team_a, target_a, atk_a), (mut pos_b, body_b, profile_b, team_b, target_b, atk_b)],
     ) = combinations.fetch_next()
     {
         // --- LAYER CHECK: Flying units don't collide with ground units! ---
         if profile_a.is_flying != profile_b.is_flying {
-            continue; // One is in the air, one is on the ground — they phase through each other
+            continue;
         }
 
         let dx = (pos_a.x - pos_b.x) as f32;
@@ -1027,18 +1019,14 @@ pub fn troop_collision_system(
         // If they are overlapping
         if dist_sq < min_dist * min_dist {
             // FIX: If they are on the EXACT same pixel (dist_sq == 0), give them a tiny deterministic nudge!
-            // Without this, 5 knights spawned on the same tile would merge into a single Mega-Knight permanently.
             let (dx, dy, dist) = if dist_sq <= 0.1 {
-                // Generate a pseudo-random nudge based on their entity positions
                 let nudge_x = (pos_a.x % 3) as f32 - 1.0;
                 let nudge_y = (pos_a.y % 3) as f32 - 1.0;
-                // If they are both exactly 0,0, force a nudge
                 let (nx, ny) = if nudge_x == 0.0 && nudge_y == 0.0 {
                     (1.0, 0.0)
                 } else {
                     (nudge_x, nudge_y)
                 };
-
                 let pseudo_dist = (nx * nx + ny * ny).sqrt();
                 (nx, ny, pseudo_dist)
             } else {
@@ -1048,29 +1036,83 @@ pub fn troop_collision_system(
             let overlap = min_dist - dist;
 
             // --- THE MASS CALCULATION ---
-            // The heavier you are, the less you get pushed.
             let total_mass = (body_a.mass + body_b.mass) as f32;
-            let push_ratio_a = body_b.mass as f32 / total_mass; // A takes B's mass % of the push
-            let push_ratio_b = body_a.mass as f32 / total_mass; // B takes A's mass % of the push
+            let push_ratio_a = body_b.mass as f32 / total_mass;
+            let push_ratio_b = body_a.mass as f32 / total_mass;
 
-            // Normalize the direction vector
-            let dir_x = dx / dist;
-            let dir_y = dy / dist;
+            // Normalize the collision axis (A ←→ B direction)
+            let col_dir_x = dx / dist;
+            let col_dir_y = dy / dist;
 
-            // --- TEAM-BASED FRICTION (Soft vs Hard Blocking) ---
-            // In Clash Royale, friendly units "slide" and compress easily to fit around a tower.
-            // Enemy units act as hard immovable walls.
-            let push_force = if team_a == team_b {
-                0.3 // Soft collision for teammates (allows them to compress slightly and wrap around towers!)
+            let is_same_team = team_a == team_b;
+            let shares_target = is_same_team && target_a.0.is_some() && target_a.0 == target_b.0;
+
+            // --- PUSH DIRECTION LOGIC ---
+            // For ENEMIES: push along the collision axis (standard physics)
+            // For SAME-TEAM + SAME-TARGET: push perpendicular to the TARGET direction!
+            //   This is the key CR insight — the target (tower) doesn't move, so the
+            //   perpendicular direction is ALWAYS THE SAME. No spinning, no oscillation.
+            let (push_dir_x, push_dir_y, push_force) = if shares_target {
+                // Get the shared target's position
+                let target_ent = target_a.0.unwrap();
+                if let Some(&(tx, ty)) = pos_lookup.get(&target_ent) {
+                    // Direction from the midpoint of the two troops toward their target
+                    let mid_x = (pos_a.x + pos_b.x) as f32 / 2.0;
+                    let mid_y = (pos_a.y + pos_b.y) as f32 / 2.0;
+                    let to_target_x = tx as f32 - mid_x;
+                    let to_target_y = ty as f32 - mid_y;
+                    let to_target_dist =
+                        (to_target_x * to_target_x + to_target_y * to_target_y).sqrt();
+
+                    if to_target_dist > 0.1 {
+                        let ttx = to_target_x / to_target_dist;
+                        let tty = to_target_y / to_target_dist;
+
+                        // Perpendicular to the target direction (rotate 90°)
+                        let perp_x = -tty;
+                        let perp_y = ttx;
+
+                        // Determine which side each troop should go:
+                        // Project the A→B vector onto the perpendicular to see which side A is on
+                        let side_dot = dx * perp_x + dy * perp_y;
+                        let sign = if side_dot >= 0.0 { 1.0 } else { -1.0 };
+
+                        // Push A in +perp direction and B in -perp direction (or vice versa)
+                        // sign ensures A goes the way it's already leaning
+                        (perp_x * sign, perp_y * sign, 0.5) // Moderate force, stable direction
+                    } else {
+                        // Fallback: too close to target, use normal collision axis
+                        (col_dir_x, col_dir_y, 0.3)
+                    }
+                } else {
+                    // Target not found, fall back to normal collision
+                    (col_dir_x, col_dir_y, 0.3)
+                }
+            } else if is_same_team {
+                (col_dir_x, col_dir_y, 0.3) // Soft collision for teammates
             } else {
-                0.8 // Hard collision for enemies (physically blocks walking)
+                (col_dir_x, col_dir_y, 0.8) // Hard collision for enemies
             };
 
-            // Calculate the push deltas
-            let push_ax = (dir_x * overlap * push_ratio_a * push_force) as i32;
-            let push_ay = (dir_y * overlap * push_ratio_a * push_force) as i32;
-            let push_bx = (dir_x * overlap * push_ratio_b * push_force) as i32;
-            let push_by = (dir_y * overlap * push_ratio_b * push_force) as i32;
+            // Calculate push deltas
+            let mut push_ax = (push_dir_x * overlap * push_ratio_a * push_force) as i32;
+            let mut push_ay = (push_dir_y * overlap * push_ratio_a * push_force) as i32;
+            let mut push_bx = (push_dir_x * overlap * push_ratio_b * push_force) as i32;
+            let mut push_by = (push_dir_y * overlap * push_ratio_b * push_force) as i32;
+
+            // --- SLIDE-THROUGH FOR SHORT-RANGE BEHIND LONG-RANGE ---
+            if is_same_team && shares_target {
+                let range_diff = atk_a.range - atk_b.range;
+                if range_diff.abs() > 0.3 {
+                    if range_diff < 0.0 {
+                        push_ax = (push_ax as f32 * 0.15) as i32;
+                        push_ay = (push_ay as f32 * 0.15) as i32;
+                    } else {
+                        push_bx = (push_bx as f32 * 0.15) as i32;
+                        push_by = (push_by as f32 * 0.15) as i32;
+                    }
+                }
+            }
 
             // --- BUG FIX: Validate pushed positions against terrain ---
             // Only apply the push if the destination tile is walkable.
