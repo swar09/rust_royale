@@ -106,7 +106,10 @@ pub fn calculate_a_star(
             };
             let new_cost = cost_so_far.get(&current.pos).unwrap() + step_cost;
 
-            if cost_so_far.get(&next).map_or(true, |&old_cost| new_cost < old_cost) {
+            if cost_so_far
+                .get(&next)
+                .is_none_or(|&old_cost| new_cost < old_cost)
+            {
                 cost_so_far.insert(next, new_cost);
                 let priority = new_cost + heuristic(next, goal) * 10;
                 frontier.push(Node {

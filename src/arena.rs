@@ -16,6 +16,12 @@ pub struct ArenaGrid {
     pub tiles: Vec<TileType>,
 }
 
+impl Default for ArenaGrid {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ArenaGrid {
     pub fn new() -> Self {
         let mut tiles = vec![TileType::Grass; ARENA_WIDTH * ARENA_HEIGHT];
@@ -23,7 +29,7 @@ impl ArenaGrid {
         // --- THE WALLS ---
         // 1. Solid Outer Boundary (Left and Right edges)
         for y in 0..ARENA_HEIGHT {
-            tiles[y * ARENA_WIDTH + 0] = TileType::Wall;
+            tiles[y * ARENA_WIDTH ] = TileType::Wall;
             tiles[y * ARENA_WIDTH + (ARENA_WIDTH - 1)] = TileType::Wall;
         }
 

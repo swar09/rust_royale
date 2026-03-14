@@ -234,12 +234,10 @@ pub fn match_manager_system(
                     } else {
                         match_state.blue_crowns = (match_state.blue_crowns + crowns).min(3);
                     }
+                } else if crowns == 3 {
+                    match_state.red_crowns = 3; // King Tower guarantees exactly 3 crowns
                 } else {
-                    if crowns == 3 {
-                        match_state.red_crowns = 3; // King Tower guarantees exactly 3 crowns
-                    } else {
-                        match_state.red_crowns = (match_state.red_crowns + crowns).min(3);
-                    }
+                    match_state.red_crowns = (match_state.red_crowns + crowns).min(3);
                 }
 
                 println!(
@@ -989,12 +987,10 @@ pub fn combat_damage_system(
                             } else {
                                 match_state.blue_crowns = (match_state.blue_crowns + 1).min(3);
                             }
+                        } else if matches!(tower, TowerType::King) {
+                            match_state.red_crowns = 3; // King Tower instantly sets score to 3
                         } else {
-                            if matches!(tower, TowerType::King) {
-                                match_state.red_crowns = 3; // King Tower instantly sets score to 3
-                            } else {
-                                match_state.red_crowns = (match_state.red_crowns + 1).min(3);
-                            }
+                            match_state.red_crowns = (match_state.red_crowns + 1).min(3);
                         }
 
                         println!(
@@ -1344,7 +1340,7 @@ pub fn spawn_towers_system(mut commands: Commands, global_stats: Res<GlobalStats
         let fixed_y = (center_float_y * 1000.0) as i32;
 
         let collision_radius = (data.footprint_x as i32 * 1000) / 2;
-        let footprint_size = data.footprint_x as usize; // Towers are square (3x3 or 4x4)
+        let footprint_size = data.footprint_x; // Towers are square (3x3 or 4x4)
 
         commands.spawn((
             Position {
