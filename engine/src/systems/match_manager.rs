@@ -17,7 +17,6 @@ pub fn match_manager_system(
     let delta = time.delta_seconds();
     match_state.clock_seconds -= delta;
 
-    // Phase Transitions
     if match_state.phase == MatchPhase::Regular && match_state.clock_seconds <= 60.0 {
         match_state.phase = MatchPhase::DoubleElixir;
         println!("🕒 60 SECONDS LEFT: DOUBLE ELIXIR!");
@@ -36,69 +35,87 @@ pub fn match_manager_system(
                 );
             }
         } else if match_state.phase == MatchPhase::Overtime {
-            // --- TIEBREAKER: Destroy the tower with the lowest HP ---
+            // --- TIEBREAKER: Instant comparison for lowest HP ---
             match_state.clock_seconds = 0.0;
 
-            let mut weakest: Option<(Entity, i32, Team, u8, TowerFootprint)> = None;
+            let mut min_hp = i32::MAX;
+            let mut max_hp = i32::MIN;
 
-            for (entity, health, team, tower_type, footprint) in towers.iter() {
-                let crowns_worth = match tower_type {
-                    TowerType::Princess => 1_u8,
-                    TowerType::King => 3_u8,
-                };
-
-                let is_weaker = match &weakest {
-                    None => true,
-                    Some((_, lowest_hp, _, _, _)) => health.0 < *lowest_hp,
-                };
-
-                if is_weaker {
-                    weakest = Some((
-                        entity,
-                        health.0,
-                        *team,
-                        crowns_worth,
-                        TowerFootprint {
-                            start_x: footprint.start_x,
-                            start_y: footprint.start_y,
-                            size: footprint.size,
-                        },
-                    ));
+            for (_, health, _, _, _) in towers.iter() {
+                if health.0 < min_hp {
+                    min_hp = health.0;
+                }
+                if health.0 > max_hp {
+                    max_hp = health.0;
                 }
             }
 
-            if let Some((entity, hp, team, crowns, footprint)) = weakest {
-                commands.entity(entity).despawn();
-                grid.clear_tower(footprint.start_x, footprint.start_y, footprint.size);
-
-                if team == Team::Red {
-                    if crowns == 3 {
-                        match_state.blue_crowns = 3; // King Tower guarantees exactly 3 crowns
-                    } else {
-                        match_state.blue_crowns = (match_state.blue_crowns + crowns).min(3);
-                    }
-                } else if crowns == 3 {
-                    match_state.red_crowns = 3; // King Tower guarantees exactly 3 crowns
-                } else {
-                    match_state.red_crowns = (match_state.red_crowns + crowns).min(3);
-                }
-
+            if min_hp == max_hp || min_hp == i32::MAX {
+                // If min_hp == max_hp, ALL towers have exactly the same health.
                 println!(
-                    "⚖️ TIEBREAKER! Destroyed {:?} tower with {} HP! Score: {}-{}",
-                    team, hp, match_state.blue_crowns, match_state.red_crowns
+                    "⚖️ TIEBREAKER: All towers have completely equal health ({} HP) — it's a DRAW!",
+                    min_hp
                 );
             } else {
-                println!("⚖️ TIEBREAKER: No towers remain — it's a DRAW!");
+                // Find and instantly destroy the tower(s) with the minimum HP
+                let mut king_destroyed_team = None;
+
+                for (entity, health, team, tower_type, footprint) in towers.iter() {
+                    if health.0 == min_hp {
+                        commands.entity(entity).despawn();
+                        grid.clear_tower(footprint.start_x, footprint.start_y, footprint.size);
+
+                        let crowns = match tower_type {
+                            TowerType::Princess => 1,
+                            TowerType::King => 3,
+                        };
+
+                        if *team == Team::Red {
+                            if crowns == 3 {
+                                match_state.blue_crowns = 3;
+                                king_destroyed_team = Some(*team);
+                            } else {
+                                match_state.blue_crowns = (match_state.blue_crowns + crowns).min(3);
+                            }
+                        } else {
+                            if crowns == 3 {
+                                match_state.red_crowns = 3;
+                                king_destroyed_team = Some(*team);
+                            } else {
+                                match_state.red_crowns = (match_state.red_crowns + crowns).min(3);
+                            }
+                        }
+
+                        println!(
+                            "💥 TIEBREAKER! {:?} tower with lowest HP ({}) destroyed! Score: {}-{}",
+                            team, min_hp, match_state.blue_crowns, match_state.red_crowns
+                        );
+                    }
+                }
+
+                // Also clean up any remaining princess towers if their king was the lowest
+                if let Some(losing_team) = king_destroyed_team {
+                    for (entity, _, team, tower_type, footprint) in towers.iter() {
+                        if *team == losing_team && matches!(tower_type, TowerType::Princess) {
+                            commands.entity(entity).despawn();
+                            grid.clear_tower(footprint.start_x, footprint.start_y, footprint.size);
+                        }
+                    }
+                }
             }
 
             match_state.phase = MatchPhase::GameOver;
-            println!("🛑 MATCH OVER!");
+            println!(
+                "🛑 MATCH OVER! Final Score: {}-{}",
+                match_state.blue_crowns, match_state.red_crowns
+            );
         }
     }
 
     // Elixir Generation
     let multiplier = match match_state.phase {
         MatchPhase::Regular => 1.0,
+        MatchPhase::GameOver => 0.0,
         _ => 2.0, // DoubleElixir and Overtime are both 2x
     };
 

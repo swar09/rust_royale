@@ -16,7 +16,7 @@ pub fn spawn_entity_system(
     mut deck: ResMut<PlayerDeck>,
 ) {
     if match_state.phase == MatchPhase::GameOver {
-        return; // No spawning after the game ends!
+        return; // No spawning after the game ends
     }
 
     for request in spawn_requests.read() {

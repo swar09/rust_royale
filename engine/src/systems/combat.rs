@@ -158,6 +158,7 @@ pub fn combat_damage_system(
         &mut WaypointPath,
     )>,
     mut defenders: Query<(
+        Entity,
         &Position,
         &mut Health,
         Option<&PhysicalBody>,
@@ -183,32 +184,29 @@ pub fn combat_damage_system(
             continue;
         }
 
-        // --- RANGE CHECK: Only tick the attack clock if we're in striking distance ---
-        // If out of range, DON'T drop the target — the movement system will chase.
-        // We just skip damage this frame so the timer doesn't tick while we're running.
-        if let Ok((defender_pos, _, defender_body, _, _, _)) = defenders.get(target_entity) {
+        // --- RANGE CHECK ---
+        if let Ok((_, defender_pos, _, defender_body, _, _, _)) = defenders.get(target_entity) {
             let dx = (attacker_pos.x - defender_pos.x) as f32 / 1000.0;
             let dy = (attacker_pos.y - defender_pos.y) as f32 / 1000.0;
             let center_dist = (dx * dx + dy * dy).sqrt();
-            // Subtract the target's radius to measure to the EDGE, not center!
             let target_radius = defender_body.map_or(0.0, |b| b.radius as f32 / 1000.0);
             let dist = center_dist - target_radius;
 
             if dist > stats.range {
-                continue; // Out of range — don't attack, but keep the lock!
+                continue;
             }
         }
 
-        // Tick the attack animation clock
         timer.0.tick(time.delta());
 
         if timer.0.just_finished() {
-            // --- THE COOLDOWN RESET ---
             timer.0.set_duration(std::time::Duration::from_secs_f32(
                 stats.hit_speed_ms as f32 / 1000.0,
             ));
 
-            if let Ok((_, mut defender_health, _, tower_type, tower_footprint, defender_team)) =
+            let mut king_destroyed_team = None;
+
+            if let Ok((_, _, mut defender_health, _, tower_type, tower_footprint, defender_team)) =
                 defenders.get_mut(target_entity)
             {
                 defender_health.0 -= stats.damage;
@@ -221,23 +219,25 @@ pub fn combat_damage_system(
                     println!("Entity {:?} was SLAIN!", target_entity);
                     commands.entity(target_entity).despawn();
                     target.0 = None;
-                    path.0.clear(); // BUG FIX: Clear stale waypoints so the troop recalculates!
+                    path.0.clear();
 
-                    // --- TOWER TILE CLEANUP ---
                     if let Some(footprint) = tower_footprint {
                         grid.clear_tower(footprint.start_x, footprint.start_y, footprint.size);
                     }
 
-                    // --- CROWN LOGIC ---
                     if let Some(tower) = tower_type {
+                        if matches!(tower, TowerType::King) {
+                            king_destroyed_team = Some(*defender_team);
+                        }
+
                         if *defender_team == Team::Red {
                             if matches!(tower, TowerType::King) {
-                                match_state.blue_crowns = 3; // King Tower instantly sets score to 3
+                                match_state.blue_crowns = 3;
                             } else {
                                 match_state.blue_crowns = (match_state.blue_crowns + 1).min(3);
                             }
                         } else if matches!(tower, TowerType::King) {
-                            match_state.red_crowns = 3; // King Tower instantly sets score to 3
+                            match_state.red_crowns = 3;
                         } else {
                             match_state.red_crowns = (match_state.red_crowns + 1).min(3);
                         }
@@ -247,7 +247,6 @@ pub fn combat_damage_system(
                             match_state.blue_crowns, match_state.red_crowns
                         );
 
-                        // Sudden Death Check or King Tower Kill
                         if matches!(tower, TowerType::King)
                             || match_state.phase == MatchPhase::Overtime
                         {
@@ -263,6 +262,29 @@ pub fn combat_damage_system(
                             );
                         }
                     }
+                }
+            }
+
+            // --- AUTO-DESTROY PRINCESS TOWERS IF KING FELL ---
+            if let Some(losing_team) = king_destroyed_team {
+                let mut princess_towers_to_destroy = Vec::new();
+                for (ent, _, _, _, tower_type, footprint, team) in defenders.iter() {
+                    if *team == losing_team && matches!(tower_type, Some(TowerType::Princess)) {
+                        princess_towers_to_destroy.push((
+                            ent,
+                            TowerFootprint {
+                                start_x: footprint.unwrap().start_x,
+                                start_y: footprint.unwrap().start_y,
+                                size: footprint.unwrap().size,
+                            },
+                        ));
+                    }
+                }
+
+                for (ent, footprint) in princess_towers_to_destroy {
+                    commands.entity(ent).despawn();
+                    grid.clear_tower(footprint.start_x, footprint.start_y, footprint.size);
+                    println!("💥 King fell! Princess tower automatically destroyed.");
                 }
             }
         }
