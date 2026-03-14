@@ -29,18 +29,18 @@ impl ArenaGrid {
         // --- THE WALLS ---
         // 1. Solid Outer Boundary (Left and Right edges)
         for y in 0..ARENA_HEIGHT {
-            tiles[y * ARENA_WIDTH ] = TileType::Wall;
+            tiles[y * ARENA_WIDTH] = TileType::Wall;
             tiles[y * ARENA_WIDTH + (ARENA_WIDTH - 1)] = TileType::Wall;
         }
 
         // 2. Solid Back Corners (y=0 and y=31, columns 1-6 and 13-18 since 0/19 are already Wall)
         // This leaves the space behind the King Tower (x=7..=12) open for deployment!
         for x in 1..=6 {
-            tiles[0 * ARENA_WIDTH + x] = TileType::Wall;
+            tiles[x] = TileType::Wall;
             tiles[(ARENA_HEIGHT - 1) * ARENA_WIDTH + x] = TileType::Wall;
         }
         for x in 13..=18 {
-            tiles[0 * ARENA_WIDTH + x] = TileType::Wall;
+            tiles[x] = TileType::Wall;
             tiles[(ARENA_HEIGHT - 1) * ARENA_WIDTH + x] = TileType::Wall;
         }
 
@@ -73,7 +73,7 @@ impl ArenaGrid {
         Self { tiles }
     }
 
-    fn place_tower(tiles: &mut Vec<TileType>, start_x: usize, start_y: usize, size: usize) {
+    fn place_tower(tiles: &mut [TileType], start_x: usize, start_y: usize, size: usize) {
         for y in start_y..start_y + size {
             for x in start_x..start_x + size {
                 if x < ARENA_WIDTH && y < ARENA_HEIGHT {

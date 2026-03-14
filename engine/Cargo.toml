@@ -1,0 +1,8 @@
+[package]
+name = "rust_royale_engine"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { workspace = true }
+rust_royale_core = { path = "../core" }
