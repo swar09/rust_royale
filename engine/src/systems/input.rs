@@ -1,5 +1,5 @@
 use bevy::{app::AppExit, prelude::*};
-use rust_royale_core::components::{SpawnRequest, Team};
+use rust_royale_core::components::{PlayerDeck, SpawnRequest, Team};
 use rust_royale_core::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 
 /// Spawns the 2D camera so we can actually see the world
@@ -64,8 +64,8 @@ pub fn window_controls(
     mut exit: EventWriter<AppExit>,
     mut window_query: Query<&mut Window>,
 ) {
-    // Esc to Close
-    if keyboard_input.just_pressed(KeyCode::Escape) {
+    // Q to Close
+    if keyboard_input.just_pressed(KeyCode::KeyQ) {
         exit.send(AppExit);
     }
 
@@ -80,11 +80,30 @@ pub fn window_controls(
     }
 }
 
+pub fn select_card_system(keyboard_input: Res<ButtonInput<KeyCode>>, mut deck: ResMut<PlayerDeck>) {
+    if keyboard_input.just_pressed(KeyCode::Digit1) {
+        deck.selected_index = Some(0);
+    }
+    if keyboard_input.just_pressed(KeyCode::Digit2) {
+        deck.selected_index = Some(1);
+    }
+    if keyboard_input.just_pressed(KeyCode::Digit3) {
+        deck.selected_index = Some(2);
+    }
+    if keyboard_input.just_pressed(KeyCode::Digit4) {
+        deck.selected_index = Some(3);
+    }
+    if keyboard_input.just_pressed(KeyCode::Escape) {
+        deck.selected_index = None;
+    }
+}
+
 pub fn handle_mouse_clicks(
     buttons: Res<ButtonInput<MouseButton>>,
     window_query: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
-    mut spawn_events: EventWriter<SpawnRequest>, // This lets us fire the event!
+    mut spawn_events: EventWriter<SpawnRequest>,
+    deck: Res<PlayerDeck>,
 ) {
     // Only run this code on the exact frame the user clicks Left Click
     if buttons.just_pressed(MouseButton::Left) {
@@ -109,15 +128,20 @@ pub fn handle_mouse_clicks(
                 && grid_y >= 0
                 && grid_y < ARENA_HEIGHT as i32
             {
-                println!("Mouse clicked on grid [{}, {}]", grid_x, grid_y);
-
-                // Fire the event! For testing, we hardcode the "knight".
-                spawn_events.send(SpawnRequest {
-                    card_key: "knight".to_string(),
-                    team: Team::Blue,
-                    grid_x,
-                    grid_y,
-                });
+                // ONLY SPAWN IF A CARD IS SELECTED
+                if let Some(selected_idx) = deck.selected_index {
+                    if let Some(ref card_key) = deck.hand[selected_idx] {
+                        println!("Playing '{}' at grid [{}, {}]", card_key, grid_x, grid_y);
+                        spawn_events.send(SpawnRequest {
+                            card_key: card_key.clone(),
+                            team: Team::Blue,
+                            grid_x,
+                            grid_y,
+                        });
+                    }
+                } else {
+                    println!("No card selected! Press 1, 2, 3, or 4.");
+                }
             }
         }
     }

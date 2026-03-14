@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use rust_royale_core::arena::TileType;
 use rust_royale_core::components::{
-    AttackStats, AttackTimer, DeployTimer, Health, MatchPhase, MatchState, PhysicalBody, Position,
-    SpawnRequest, Target, TargetingProfile, Team, TowerFootprint, TowerType, Velocity,
-    WaypointPath,
+    AttackStats, AttackTimer, DeployTimer, Health, MatchPhase, MatchState, PhysicalBody,
+    PlayerDeck, Position, SpawnRequest, Target, TargetingProfile, Team, TowerFootprint, TowerType,
+    Velocity, WaypointPath,
 };
 use rust_royale_core::stats::{GlobalStats, SpeedTier};
 
@@ -13,6 +13,7 @@ pub fn spawn_entity_system(
     global_stats: Res<GlobalStats>,
     mut match_state: ResMut<MatchState>,
     grid: Res<rust_royale_core::arena::ArenaGrid>,
+    mut deck: ResMut<PlayerDeck>,
 ) {
     if match_state.phase == MatchPhase::GameOver {
         return; // No spawning after the game ends!
@@ -63,6 +64,15 @@ pub fn spawn_entity_system(
             // Deduct from the correct bank
             if request.team == Team::Blue {
                 match_state.blue_elixir -= cost;
+
+                // --- DECK ROTATION LOGIC ---
+                if let Some(selected_idx) = deck.selected_index {
+                    if let Some(played_card) = deck.hand[selected_idx].take() {
+                        deck.queue.push(played_card); // Send to back of queue
+                        deck.hand[selected_idx] = Some(deck.queue.remove(0)); // Pull next card into hand
+                        deck.selected_index = None; // Deselect hand after use
+                    }
+                }
             } else {
                 match_state.red_elixir -= cost;
             }

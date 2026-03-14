@@ -125,3 +125,40 @@ pub struct TargetingProfile {
 // Stores the turn-by-turn grid coordinates the unit needs to walk to
 #[derive(Component, Debug, Default)]
 pub struct WaypointPath(pub Vec<(i32, i32)>);
+
+#[derive(Resource, Debug)]
+pub struct PlayerDeck {
+    pub hand: [Option<String>; 4],
+    pub queue: Vec<String>,
+    pub selected_index: Option<usize>,
+}
+
+impl Default for PlayerDeck {
+    fn default() -> Self {
+        // Hardcoded starter deck for testing
+        let mut all_cards = vec![
+            "knight".to_string(),
+            "archer".to_string(),
+            "giant".to_string(),
+            "arrows".to_string(),
+            "musketeer".to_string(),
+            "baby_dragon".to_string(),
+            "skeleton_army".to_string(),
+            "fireball".to_string(),
+        ];
+
+        // Deal the first 4 cards
+        let hand = [
+            Some(all_cards.remove(0)),
+            Some(all_cards.remove(0)),
+            Some(all_cards.remove(0)),
+            Some(all_cards.remove(0)),
+        ];
+
+        Self {
+            hand,
+            queue: all_cards,
+            selected_index: None,
+        }
+    }
+}

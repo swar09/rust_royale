@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use rust_royale_core::arena::{ArenaGrid, TileType};
 use rust_royale_core::components::{
-    ElixirUIText, MatchState, PhysicalBody, Position, TargetingProfile, Team,
+    ElixirUIText, MatchState, PhysicalBody, PlayerDeck, Position, TargetingProfile, Team,
 };
 use rust_royale_core::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 
@@ -112,21 +112,23 @@ pub fn setup_ui(mut commands: Commands) {
 }
 
 pub fn update_elixir_ui(
-    match_state: Res<MatchState>, // Read the match state
-    // Find exactly ONE mutable text component that also has our marker tag
+    match_state: Res<MatchState>,
+    deck: Res<PlayerDeck>,
     mut query: Query<&mut Text, With<ElixirUIText>>,
 ) {
     if let Ok(mut text) = query.get_single_mut() {
         let minutes = (match_state.clock_seconds / 60.0) as u32;
         let seconds = (match_state.clock_seconds % 60.0) as u32;
+
+        let h0 = deck.hand[0].as_deref().unwrap_or("Empty");
+        let h1 = deck.hand[1].as_deref().unwrap_or("Empty");
+        let h2 = deck.hand[2].as_deref().unwrap_or("Empty");
+        let h3 = deck.hand[3].as_deref().unwrap_or("Empty");
+        let selected = deck.selected_index.map(|i| i + 1).unwrap_or(0);
+
         text.sections[0].value = format!(
-            "⏱ {}:{:02} | 💧 Blue: {:.1} | 🔴 Red: {:.1} | 👑 {}-{}",
-            minutes,
-            seconds,
-            match_state.blue_elixir,
-            match_state.red_elixir,
-            match_state.blue_crowns,
-            match_state.red_crowns
+            "⏱ {}:{:02} | 💧 {:.1}\nHand: [1] {} | [2] {} | [3] {} | [4] {}\nSelected: Slot {}",
+            minutes, seconds, match_state.blue_elixir, h0, h1, h2, h3, selected
         );
     }
 }

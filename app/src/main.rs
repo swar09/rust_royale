@@ -2,11 +2,11 @@ use bevy::prelude::*;
 use std::fs;
 
 use rust_royale_core::arena::ArenaGrid;
-use rust_royale_core::components::MatchState;
+use rust_royale_core::components::{MatchState, PlayerDeck};
 use rust_royale_core::stats::{GameStats, GlobalStats};
 use rust_royale_engine::systems::combat::{combat_damage_system, targeting_system};
 use rust_royale_engine::systems::input::{
-    handle_mouse_clicks, mouse_interaction, setup_camera, window_controls,
+    handle_mouse_clicks, mouse_interaction, select_card_system, setup_camera, window_controls,
 };
 use rust_royale_engine::systems::match_manager::match_manager_system;
 use rust_royale_engine::systems::movement::{physics_movement_system, troop_collision_system};
@@ -32,6 +32,7 @@ fn main() {
         .insert_resource(ArenaGrid::new())
         .insert_resource(GlobalStats(parsed_stats))
         .insert_resource(MatchState::default())
+        .insert_resource(PlayerDeck::default())
         .add_event::<rust_royale_core::components::SpawnRequest>()
         .add_systems(Startup, (setup_camera, spawn_towers_system, setup_ui))
         .add_systems(
@@ -40,6 +41,7 @@ fn main() {
                 draw_debug_grid,
                 mouse_interaction,
                 window_controls,
+                select_card_system,
                 handle_mouse_clicks,
                 match_manager_system,
                 spawn_entity_system,
