@@ -1,14 +1,20 @@
 use bevy::prelude::*;
 use std::fs;
 
-use rust_royale::arena::ArenaGrid;
-use rust_royale::components::MatchState;
-use rust_royale::stats::{GameStats, GlobalStats};
-use rust_royale::systems::{
-    combat_damage_system, deployment_system, draw_debug_grid, draw_entities, handle_mouse_clicks,
-    match_manager_system, mouse_interaction, physics_movement_system, setup_camera, setup_ui,
-    spawn_entity_system, spawn_towers_system, targeting_system, troop_collision_system,
-    update_elixir_ui, window_controls,
+use rust_royale_core::arena::ArenaGrid;
+use rust_royale_core::components::MatchState;
+use rust_royale_core::stats::{GameStats, GlobalStats};
+use rust_royale_engine::systems::combat::{combat_damage_system, targeting_system};
+use rust_royale_engine::systems::input::{
+    handle_mouse_clicks, mouse_interaction, setup_camera, window_controls,
+};
+use rust_royale_engine::systems::match_manager::match_manager_system;
+use rust_royale_engine::systems::movement::{physics_movement_system, troop_collision_system};
+use rust_royale_engine::systems::spawning::{
+    deployment_system, spawn_entity_system, spawn_towers_system,
+};
+use rust_royale_engine::systems::ui::{
+    draw_debug_grid, draw_entities, setup_ui, update_elixir_ui,
 };
 
 fn main() {
@@ -28,7 +34,7 @@ fn main() {
         .insert_resource(ArenaGrid::new())
         .insert_resource(GlobalStats(parsed_stats))
         .insert_resource(MatchState::default())
-        .add_event::<rust_royale::components::SpawnRequest>()
+        .add_event::<rust_royale_core::components::SpawnRequest>()
         .add_systems(Startup, (setup_camera, spawn_towers_system, setup_ui))
         .add_systems(
             Update,

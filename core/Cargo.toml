@@ -1,0 +1,9 @@
+[package]
+name = "rust_royale_core"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+bevy = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }

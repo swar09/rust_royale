@@ -2985,11 +2985,39 @@ dependencies = [
 ]
 
 [[package]]
-name = "rust_royale"
+name = "rust_royale_app"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rust_royale_core",
+ "rust_royale_engine",
+ "serde_json",
+]
+
+[[package]]
+name = "rust_royale_core"
 version = "0.1.0"
 dependencies = [
  "bevy",
  "serde",
+ "serde_json",
+]
+
+[[package]]
+name = "rust_royale_engine"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rust_royale_core",
+]
+
+[[package]]
+name = "rust_royale_sandbox"
+version = "0.1.0"
+dependencies = [
+ "bevy",
+ "rust_royale_core",
+ "rust_royale_engine",
  "serde_json",
 ]
 
