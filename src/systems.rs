@@ -476,12 +476,15 @@ pub fn physics_movement_system(
                         if path.0.is_empty() {
                             let start_grid = (pos.x / 1000, pos.y / 1000);
 
+                            let target_radius_tiles = (target_radius as f32 / 1000.0) as i32;
+                            let total_range = (attack_stats.range as i32) + target_radius_tiles;
+
                             if let Some(new_route) = calculate_a_star(
                                 &grid,
                                 start_grid,
                                 target_grid,
                                 profile.is_flying,
-                                (attack_stats.range as i32).max(1),
+                                total_range.max(1),
                             ) {
                                 path.0 = new_route;
                             }
@@ -565,52 +568,93 @@ pub fn physics_movement_system(
         }
 
         // --- THE WALL CHECK ---
-        let target_x = pos.x + move_x;
-        let target_y = pos.y + move_y;
+        // --- THE SLIDING WALL CHECK ---
+        let mut final_move_x = 0;
+        let mut final_move_y = 0;
 
-        let grid_x = target_x / 1000;
-        let grid_y = target_y / 1000;
+        let grid_x = (pos.x + move_x) / 1000;
+        let grid_y = (pos.y + move_y) / 1000;
 
-        // Boundary Check: Don't walk off the map!
+        let is_using_gps = !path.0.is_empty();
+
+        // 1. Check if the full step is valid
+        let mut full_step_valid = false;
         if grid_x >= 0
             && grid_x < crate::constants::ARENA_WIDTH as i32
             && grid_y >= 0
             && grid_y < crate::constants::ARENA_HEIGHT as i32
         {
-            // Check if we are CURRENTLY stuck on an unwalkable tile (spawned on tower, pushed onto river, etc.)
-            let current_gx = pos.x / 1000;
-            let current_gy = pos.y / 1000;
-            let currently_stuck = if current_gx >= 0
-                && current_gx < crate::constants::ARENA_WIDTH as i32
-                && current_gy >= 0
-                && current_gy < crate::constants::ARENA_HEIGHT as i32
-            {
-                let current_tile = &grid.tiles
-                    [(current_gy * crate::constants::ARENA_WIDTH as i32 + current_gx) as usize];
-                match current_tile {
-                    crate::arena::TileType::River => !profile.is_flying,
-                    crate::arena::TileType::Tower | crate::arena::TileType::Wall => true,
-                    _ => false,
-                }
-            } else {
-                true // Off-map = stuck
-            };
-
-            // Destination Tile Check
-            let tile_index = (grid_y * crate::constants::ARENA_WIDTH as i32 + grid_x) as usize;
-            let dest_tile = &grid.tiles[tile_index];
-            let can_walk_dest = match dest_tile {
+            let dest_tile =
+                &grid.tiles[(grid_y * crate::constants::ARENA_WIDTH as i32 + grid_x) as usize];
+            full_step_valid = match dest_tile {
                 crate::arena::TileType::River => profile.is_flying,
                 crate::arena::TileType::Tower | crate::arena::TileType::Wall => false,
                 _ => true,
             };
+        }
 
-            // If we're already stuck, ALWAYS allow movement to escape!
-            // If we're not stuck, only allow movement if the destination is walkable.
-            if currently_stuck || can_walk_dest {
-                pos.x = target_x;
-                pos.y = target_y;
+        // 2. Decide how to move
+        if full_step_valid || is_using_gps {
+            // Full move OK (or we trust GPS)
+            final_move_x = move_x;
+            final_move_y = move_y;
+        } else {
+            // Full move BLOCKED. Try SLIDING!
+            // Slide X
+            let nx = pos.x + move_x;
+            let ngx = nx / 1000;
+            let gy = pos.y / 1000;
+            if ngx >= 0 && ngx < crate::constants::ARENA_WIDTH as i32 {
+                let tile = &grid.tiles[(gy * crate::constants::ARENA_WIDTH as i32 + ngx) as usize];
+                if match tile {
+                    crate::arena::TileType::River => profile.is_flying,
+                    crate::arena::TileType::Tower | crate::arena::TileType::Wall => false,
+                    _ => true,
+                } {
+                    final_move_x = move_x;
+                }
             }
+            // Slide Y
+            let ny = pos.y + move_y;
+            let ngy = ny / 1000;
+            let gx = pos.x / 1000;
+            if ngy >= 0 && ngy < crate::constants::ARENA_HEIGHT as i32 {
+                let tile = &grid.tiles[(ngy * crate::constants::ARENA_WIDTH as i32 + gx) as usize];
+                if match tile {
+                    crate::arena::TileType::River => profile.is_flying,
+                    crate::arena::TileType::Tower | crate::arena::TileType::Wall => false,
+                    _ => true,
+                } {
+                    final_move_y = move_y;
+                }
+            }
+        }
+
+        // 3. Emergency Escape: If currently stuck, ALWAYS allow ANY move to get out!
+        let cur_gx = pos.x / 1000;
+        let cur_gy = pos.y / 1000;
+        let currently_stuck = if cur_gx >= 0
+            && cur_gx < crate::constants::ARENA_WIDTH as i32
+            && cur_gy >= 0
+            && cur_gy < crate::constants::ARENA_HEIGHT as i32
+        {
+            let cur_tile =
+                &grid.tiles[(cur_gy * crate::constants::ARENA_WIDTH as i32 + cur_gx) as usize];
+            match cur_tile {
+                crate::arena::TileType::River => !profile.is_flying,
+                crate::arena::TileType::Tower | crate::arena::TileType::Wall => true,
+                _ => false,
+            }
+        } else {
+            true
+        };
+
+        if currently_stuck {
+            pos.x += move_x;
+            pos.y += move_y;
+        } else {
+            pos.x += final_move_x;
+            pos.y += final_move_y;
         }
     }
 }
