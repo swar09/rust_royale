@@ -92,6 +92,8 @@ pub struct TroopStats {
     pub splash_radius: Option<f32>,
     pub splash_type: Option<SplashType>, // Enum!
     pub pierce_length: Option<f32>,
+
+    pub spawn_count: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

@@ -92,73 +92,87 @@ pub fn spawn_entity_system(
                 }
             );
 
-            // Convert grid coordinates to fixed-point center-of-tile coordinates
-            let fixed_x = (request.grid_x * 1000) + 500;
-            let fixed_y = (request.grid_y * 1000) + 500;
+            let count = troop_data.spawn_count.unwrap_or(1);
 
-            // --- THE ENUM TO MATH TRANSLATION ---
-            // 1 unit of speed = 0.02 tiles/sec (CR logic) mapped to Fixed-Point (1000 = 1 tile)
-            let math_speed = match troop_data.speed {
-                SpeedTier::VerySlow => 600,  // 30  units = 0.6 tiles/sec
-                SpeedTier::Slow => 900,      // 45  units = 0.9 tiles/sec
-                SpeedTier::Medium => 1200,   // 60  units = 1.2 tiles/sec
-                SpeedTier::Fast => 1800,     // 90  units = 1.8 tiles/sec
-                SpeedTier::VeryFast => 2400, // 120 units = 2.4 tiles/sec
-            };
+            let mut entity_ids = Vec::new();
 
-            // Calculate the radius (footprint / 2) in fixed-point math
-            let collision_radius = (troop_data.footprint_x as i32 * 1000) / 2;
+            // THE SWARM LOOP
+            for i in 0..count {
+                let base_x = (request.grid_x * 1000) + 500;
+                let base_y = (request.grid_y * 1000) + 500;
 
-            let entity_id = commands
-                .spawn((
-                    Position {
-                        x: fixed_x,
-                        y: fixed_y,
-                    },
-                    Velocity(math_speed),
-                    Health(troop_data.health),
-                    request.team,
-                    Target(None),
-                    // --- THE PHYSICAL BODY ---
-                    PhysicalBody {
-                        radius: collision_radius,
-                        mass: troop_data.mass,
-                    },
-                    AttackStats {
-                        damage: troop_data.damage,
-                        range: troop_data.range,
-                        hit_speed_ms: troop_data.hit_speed_ms,
-                        first_attack_sec: troop_data.first_attack_sec,
-                    },
-                    // Create a repeating timer based on the JSON hit speed
-                    AttackTimer(Timer::from_seconds(
-                        troop_data.hit_speed_ms as f32 / 1000.0,
-                        TimerMode::Repeating,
-                    )),
-                    // --- READ THE JSON DELAY HERE ---
-                    DeployTimer(Timer::from_seconds(
-                        troop_data.deploy_time_sec,
-                        TimerMode::Once,
-                    )),
-                    TargetingProfile {
-                        is_flying: troop_data.is_flying,
-                        is_building: false, // Troops are never buildings!
-                        targets_air: troop_data.targets_air,
-                        targets_ground: troop_data.targets_ground,
-                        preference: troop_data.target_preference.clone(),
-                    },
-                    WaypointPath(Vec::new()), // <-- AND THE NEW PATHFINDER
-                ))
-                .id();
+                let offset_x = if count > 1 {
+                    ((i as i32 % 2) * 400) - 200
+                } else {
+                    0
+                };
+
+                let offset_y = if count > 1 { (i as i32 / 2) * -400 } else { 0 };
+
+                let fixed_x = base_x + offset_x;
+                let fixed_y = base_y + offset_y;
+
+                // --- THE ENUM TO MATH TRANSLATION ---
+                // 1 unit of speed = 0.02 tiles/sec (CR logic) mapped to Fixed-Point (1000 = 1 tile)
+                let math_speed = match troop_data.speed {
+                    SpeedTier::VerySlow => 600,  // 30  units = 0.6 tiles/sec
+                    SpeedTier::Slow => 900,      // 45  units = 0.9 tiles/sec
+                    SpeedTier::Medium => 1200,   // 60  units = 1.2 tiles/sec
+                    SpeedTier::Fast => 1800,     // 90  units = 1.8 tiles/sec
+                    SpeedTier::VeryFast => 2400, // 120 units = 2.4 tiles/sec
+                };
+
+                // Calculate the radius (footprint / 2) in fixed-point math
+                let collision_radius = (troop_data.footprint_x as i32 * 1000) / 2;
+
+                let entity_id = commands
+                    .spawn((
+                        Position {
+                            x: fixed_x,
+                            y: fixed_y,
+                        },
+                        Velocity(math_speed),
+                        Health(troop_data.health),
+                        request.team,
+                        Target(None),
+                        // --- THE PHYSICAL BODY ---
+                        PhysicalBody {
+                            radius: collision_radius,
+                            mass: troop_data.mass,
+                        },
+                        AttackStats {
+                            damage: troop_data.damage,
+                            range: troop_data.range,
+                            hit_speed_ms: troop_data.hit_speed_ms,
+                            first_attack_sec: troop_data.first_attack_sec,
+                        },
+                        // Create a repeating timer based on the JSON hit speed
+                        AttackTimer(Timer::from_seconds(
+                            troop_data.hit_speed_ms as f32 / 1000.0,
+                            TimerMode::Repeating,
+                        )),
+                        // --- READ THE JSON DELAY HERE ---
+                        DeployTimer(Timer::from_seconds(
+                            troop_data.deploy_time_sec,
+                            TimerMode::Once,
+                        )),
+                        TargetingProfile {
+                            is_flying: troop_data.is_flying,
+                            is_building: false, // Troops are never buildings!
+                            targets_air: troop_data.targets_air,
+                            targets_ground: troop_data.targets_ground,
+                            preference: troop_data.target_preference.clone(),
+                        },
+                        WaypointPath(Vec::new()), // <-- AND THE NEW PATHFINDER
+                    ))
+                    .id();
+
+                entity_ids.push(entity_id);
+            }
 
             println!(
-                "SPAWNED: {} (Entity {:?}) at Grid [{}, {}] with {} HP, Speed {}!",
-                troop_data.name,
-                entity_id,
-                request.grid_x,
-                request.grid_y,
-                troop_data.health,
-                math_speed
+                "SPAWNED: {} {}s (Entities {:?}) at Grid [{}, {}]!",
+                count, troop_data.name, entity_ids, request.grid_x, request.grid_y
             );
         } else {
             println!(
