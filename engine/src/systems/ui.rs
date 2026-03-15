@@ -2,35 +2,77 @@ use bevy::prelude::*;
 use rust_royale_core::arena::{ArenaGrid, TileType};
 use rust_royale_core::components::{
     ElixirUIText, MatchState, PhysicalBody, PlayerDeck, Position, Projectile, TargetingProfile,
-    Team,
+    Team, TowerFootprint, TowerType,
 };
 use rust_royale_core::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 
 /// Uses Bevy's Gizmos to draw the 18x32 wireframe matrix
-pub fn draw_debug_grid(mut gizmos: Gizmos, grid: Res<ArenaGrid>) {
+pub fn draw_debug_grid(
+    mut gizmos: Gizmos,
+    grid: Res<ArenaGrid>,
+    towers: Query<(&Team, &TowerType, &TowerFootprint)>,
+) {
     let total_width = ARENA_WIDTH as f32 * TILE_SIZE;
     let total_height = ARENA_HEIGHT as f32 * TILE_SIZE;
     let start_x = -total_width / 2.0;
     let start_y = -total_height / 2.0;
 
-    // Draw the Background Tiles
+    // --- 1. SCAN THE ALIVE TOWERS TO FIND POCKETS ---
+    let mut red_left_alive = false;
+    let mut red_right_alive = false;
+
+    // Half of ARENA_WIDTH is the lane divider
+    let divider = ARENA_WIDTH / 2;
+
+    for (t_team, t_type, footprint) in towers.iter() {
+        if matches!(t_type, TowerType::Princess) && *t_team == Team::Red {
+            if footprint.start_x < divider {
+                red_left_alive = true;
+            } else {
+                red_right_alive = true;
+            }
+        }
+    }
+
+    // Determine the max Y coordinate Blue is allowed to deploy in
+    // Standard limit is 14 (base of river). If tower is gone, limit is 20 (4 tiles deep).
+    let blue_max_y_left = if red_left_alive { 14 } else { 20 };
+    let blue_max_y_right = if red_right_alive { 14 } else { 20 };
+
+    // --- 2. DRAW THE TINTED GRID ---
     for y in 0..ARENA_HEIGHT {
         for x in 0..ARENA_WIDTH {
-            let color = match grid.tiles[y * ARENA_WIDTH + x] {
-                TileType::Grass => Color::DARK_GREEN,
-                TileType::River => Color::BLUE,
-                TileType::Bridge => Color::GRAY,
-                TileType::Tower => Color::GOLD,
-                TileType::Wall => Color::DARK_GRAY,
-            };
+            let tile = &grid.tiles[y * ARENA_WIDTH + x];
 
             let pos = Vec2::new(
                 start_x + (x as f32 * TILE_SIZE) + (TILE_SIZE / 2.0),
                 start_y + (y as f32 * TILE_SIZE) + (TILE_SIZE / 2.0),
             );
 
+            // Is this tile in a valid Blue deployment zone?
+            let is_left_lane = x < divider;
+            let is_valid_depth = if is_left_lane {
+                y as i32 <= blue_max_y_left
+            } else {
+                y as i32 <= blue_max_y_right
+            };
+
+            let color = match tile {
+                TileType::River => Color::rgb(0.0, 0.4, 0.8),
+                TileType::Bridge => Color::rgb(0.5, 0.3, 0.1),
+                TileType::Grass => {
+                    if is_valid_depth {
+                        Color::rgb(0.2, 0.7, 0.2) // Brighter Green (Valid)
+                    } else {
+                        Color::rgb(0.1, 0.3, 0.1) // Dark Green (Invalid)
+                    }
+                }
+                TileType::Tower => Color::rgb(0.6, 0.6, 0.2),
+                TileType::Wall => Color::rgb(0.3, 0.3, 0.3),
+            };
+
             // Draw a slightly smaller rect to see the grid lines
-            gizmos.rect_2d(pos, 0.0, Vec2::splat(TILE_SIZE * 0.9), color);
+            gizmos.rect_2d(pos, 0.0, Vec2::splat(TILE_SIZE * 0.95), color);
         }
     }
 }

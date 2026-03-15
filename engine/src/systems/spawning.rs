@@ -14,6 +14,7 @@ pub fn spawn_entity_system(
     mut match_state: ResMut<MatchState>,
     grid: Res<rust_royale_core::arena::ArenaGrid>,
     mut deck: ResMut<PlayerDeck>,
+    towers: Query<(&Team, &TowerType, &TowerFootprint)>,
 ) {
     if match_state.phase == MatchPhase::GameOver {
         return; // No spawning after the game ends
@@ -42,6 +43,76 @@ pub fn spawn_entity_system(
 
             if !can_deploy {
                 println!("ERROR: Cannot deploy on {:?} tile!", tile);
+                continue;
+            }
+
+            // --- DYNAMIC POCKET / DEPLOYMENT ZONE VALIDATION ---
+            let divider = rust_royale_core::constants::ARENA_WIDTH as i32 / 2;
+            let is_left_lane = request.grid_x < divider;
+
+            let mut red_left_alive = false;
+            let mut red_right_alive = false;
+            let mut blue_left_alive = false;
+            let mut blue_right_alive = false;
+
+            for (t_team, t_type, footprint) in towers.iter() {
+                if matches!(t_type, TowerType::Princess) {
+                    if *t_team == Team::Red {
+                        if footprint.start_x < divider as usize {
+                            red_left_alive = true;
+                        } else {
+                            red_right_alive = true;
+                        }
+                    } else if *t_team == Team::Blue {
+                        if footprint.start_x < divider as usize {
+                            blue_left_alive = true;
+                        } else {
+                            blue_right_alive = true;
+                        }
+                    }
+                }
+            }
+
+            let (min_y, max_y) = match request.team {
+                Team::Blue => {
+                    let max_y = if is_left_lane {
+                        if red_left_alive {
+                            14
+                        } else {
+                            20
+                        }
+                    } else {
+                        if red_right_alive {
+                            14
+                        } else {
+                            20
+                        }
+                    };
+                    (0, max_y)
+                }
+                Team::Red => {
+                    let min_y = if is_left_lane {
+                        if blue_left_alive {
+                            17
+                        } else {
+                            11
+                        }
+                    } else {
+                        if blue_right_alive {
+                            17
+                        } else {
+                            11
+                        }
+                    };
+                    (min_y, 31)
+                }
+            };
+
+            if request.grid_y < min_y || request.grid_y > max_y {
+                println!(
+                    "ERROR: Cannot deploy at Y={}! Zone restricted for Team {:?}. Limits: [{}, {}]",
+                    request.grid_y, request.team, min_y, max_y
+                );
                 continue;
             }
 
