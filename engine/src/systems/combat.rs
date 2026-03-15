@@ -1,9 +1,9 @@
 #![allow(clippy::type_complexity)]
 use bevy::prelude::*;
 use rust_royale_core::components::{
-    AoEPayload, AttackStats, AttackTimer, DeployTimer, Health, MatchPhase, MatchState,
-    PhysicalBody, Position, Projectile, SpellStrike, Target, TargetingProfile, Team,
-    TowerFootprint, TowerStatus, TowerType, WaypointPath,
+    AoEPayload, AttackStats, AttackTimer, DeathSpawn, DeathSpawnEvent, DeployTimer, Health,
+    MatchPhase, MatchState, PhysicalBody, Position, Projectile, SpellStrike, Target,
+    TargetingProfile, Team, TowerFootprint, TowerStatus, TowerType, WaypointPath,
 };
 
 pub fn targeting_system(
@@ -259,24 +259,39 @@ pub fn projectile_flight_system(
     mut commands: Commands,
     time: Res<Time>,
     mut projectiles: Query<(Entity, &mut Position, &Projectile, &Target)>,
-    mut targets: Query<(
-        Entity,
-        &mut Health,
-        Option<&TowerType>,
-        Option<&TowerFootprint>,
-        &Team,
-        Option<&mut TowerStatus>,
-    )>,
-    target_positions: Query<&Position, Without<Projectile>>,
+    mut targets: Query<
+        (
+            Entity,
+            &mut Health,
+            Option<&TowerType>,
+            Option<&TowerFootprint>,
+            &Team,
+            Option<&mut TowerStatus>,
+            Option<&DeathSpawn>,
+            &Position,
+        ),
+        (With<Health>, Without<Projectile>),
+    >,
     mut match_state: ResMut<MatchState>,
     mut grid: ResMut<rust_royale_core::arena::ArenaGrid>,
     mut other_troops: Query<&mut Target, Without<Projectile>>, // For clearing targets if a unit died
+    mut death_events: EventWriter<DeathSpawnEvent>,
 ) {
     let delta = time.delta_seconds();
 
     for (proj_entity, mut proj_pos, proj_stats, target) in projectiles.iter_mut() {
         if let Some(target_ent) = target.0 {
-            if let Ok(target_pos) = target_positions.get(target_ent) {
+            if let Ok((
+                target_ent_inner,
+                mut health,
+                tower_type,
+                tower_footprint,
+                target_team,
+                mut tower_status,
+                death_spawn,
+                target_pos,
+            )) = targets.get_mut(target_ent)
+            {
                 let dx = target_pos.x - proj_pos.x;
                 let dy = target_pos.y - proj_pos.y;
                 let dist = ((dx as f32).powi(2) + (dy as f32).powi(2)).sqrt();
@@ -286,89 +301,87 @@ pub fn projectile_flight_system(
                     let mut king_destroyed_team = None;
                     let mut wake_king_team = None;
 
-                    if let Ok((
-                        entity,
-                        mut health,
-                        tower_type,
-                        tower_footprint,
-                        team,
-                        mut tower_status,
-                    )) = targets.get_mut(target_ent)
-                    {
-                        health.0 -= proj_stats.damage;
+                    health.0 -= proj_stats.damage;
 
-                        // --- ALARM CLOCK 1: DIRECT DAMAGE ---
-                        // If the King takes damage while sleeping, he wakes up!
-                        if let Some(ref mut status) = tower_status {
-                            if **status == TowerStatus::Sleeping {
-                                **status = TowerStatus::Active;
-                                println!(
-                                    "👑 The {:?} King Tower has AWAKENED from direct damage!",
-                                    team
-                                );
+                    // --- ALARM CLOCK 1: DIRECT DAMAGE ---
+                    if let Some(ref mut status) = tower_status {
+                        if **status == TowerStatus::Sleeping {
+                            **status = TowerStatus::Active;
+                            println!(
+                                "👑 The {:?} King Tower has AWAKENED from direct damage!",
+                                target_team
+                            );
+                        }
+                    }
+
+                    println!(
+                        "💥 Projectile hit! Dealt {} damage. Target HP: {}",
+                        proj_stats.damage, health.0
+                    );
+
+                    if health.0 <= 0 {
+                        // --- DEATH SPAWN ---
+                        if let Some(ds) = death_spawn {
+                            death_events.send(DeathSpawnEvent {
+                                card_key: ds.card_key.clone(),
+                                count: ds.count,
+                                team: *target_team,
+                                fixed_x: target_pos.x,
+                                fixed_y: target_pos.y,
+                            });
+                        }
+
+                        println!("Entity {:?} was SLAIN by Projectile!", target_ent_inner);
+                        commands.entity(target_ent_inner).despawn();
+
+                        // Clear paths/targets for anyone else who was aiming here
+                        for mut other_target in other_troops.iter_mut() {
+                            if other_target.0 == Some(target_ent_inner) {
+                                other_target.0 = None;
                             }
                         }
 
-                        println!(
-                            "💥 Projectile hit! Dealt {} damage. Target HP: {}",
-                            proj_stats.damage, health.0
-                        );
+                        if let Some(footprint) = tower_footprint {
+                            grid.clear_tower(footprint.start_x, footprint.start_y, footprint.size);
+                        }
 
-                        if health.0 <= 0 {
-                            println!("Entity {:?} was SLAIN by Projectile!", entity);
-                            commands.entity(entity).despawn();
-
-                            // Clear paths/targets for anyone else who was aiming here
-                            for mut other_target in other_troops.iter_mut() {
-                                if other_target.0 == Some(entity) {
-                                    other_target.0 = None;
-                                }
+                        if let Some(tower) = tower_type {
+                            if matches!(tower, TowerType::King) {
+                                king_destroyed_team = Some(*target_team);
+                            } else if matches!(tower, TowerType::Princess) {
+                                wake_king_team = Some(*target_team);
                             }
 
-                            if let Some(footprint) = tower_footprint {
-                                grid.clear_tower(
-                                    footprint.start_x,
-                                    footprint.start_y,
-                                    footprint.size,
-                                );
-                            }
-
-                            if let Some(tower) = tower_type {
+                            if *target_team == Team::Red {
                                 if matches!(tower, TowerType::King) {
-                                    king_destroyed_team = Some(*team);
-                                } else if matches!(tower, TowerType::Princess) {
-                                    // --- ALARM CLOCK 2: PRINCESS FELL ---
-                                    wake_king_team = Some(*team);
-                                }
-
-                                if *team == Team::Red {
-                                    if matches!(tower, TowerType::King) {
-                                        match_state.blue_crowns = 3;
-                                    } else {
-                                        match_state.blue_crowns =
-                                            (match_state.blue_crowns + 1).min(3);
-                                    }
-                                } else if matches!(tower, TowerType::King) {
-                                    match_state.red_crowns = 3;
+                                    match_state.blue_crowns = 3;
                                 } else {
-                                    match_state.red_crowns = (match_state.red_crowns + 1).min(3);
+                                    match_state.blue_crowns = (match_state.blue_crowns + 1).min(3);
                                 }
+                            } else if matches!(tower, TowerType::King) {
+                                match_state.red_crowns = 3;
+                            } else {
+                                match_state.red_crowns = (match_state.red_crowns + 1).min(3);
+                            }
 
+                            println!(
+                                "👑 TOWER DOWN! Score: {}-{}",
+                                match_state.blue_crowns, match_state.red_crowns
+                            );
+
+                            if matches!(tower, TowerType::King)
+                                || match_state.phase == MatchPhase::Overtime
+                            {
+                                match_state.phase = MatchPhase::GameOver;
+                                let winner = if *target_team == Team::Red {
+                                    "BLUE"
+                                } else {
+                                    "RED"
+                                };
                                 println!(
-                                    "👑 TOWER DOWN! Score: {}-{}",
-                                    match_state.blue_crowns, match_state.red_crowns
+                                    "🛑 MATCH OVER BY KNOCKOUT! {} TEAM WINS! {}-{}",
+                                    winner, match_state.blue_crowns, match_state.red_crowns
                                 );
-
-                                if matches!(tower, TowerType::King)
-                                    || match_state.phase == MatchPhase::Overtime
-                                {
-                                    match_state.phase = MatchPhase::GameOver;
-                                    let winner = if *team == Team::Red { "BLUE" } else { "RED" };
-                                    println!(
-                                        "🛑 MATCH OVER BY KNOCKOUT! {} TEAM WINS! {}-{}",
-                                        winner, match_state.blue_crowns, match_state.red_crowns
-                                    );
-                                }
                             }
                         }
                     }
@@ -376,7 +389,7 @@ pub fn projectile_flight_system(
                     // AUTO-DESTROY PRINCESS TOWERS IF KING FELL
                     if let Some(losing_team) = king_destroyed_team {
                         let mut princess_towers_to_destroy = Vec::new();
-                        for (ent, _, tower_type, footprint, team, _) in targets.iter() {
+                        for (ent, _, tower_type, footprint, team, _, _, _) in targets.iter() {
                             if *team == losing_team
                                 && matches!(tower_type, Some(TowerType::Princess))
                             {
@@ -400,7 +413,7 @@ pub fn projectile_flight_system(
 
                     // --- EXECUTE ALARM CLOCK 2 ---
                     if let Some(team_to_wake) = wake_king_team {
-                        for (_, _, t_type, _, t_team, mut opt_status) in targets.iter_mut() {
+                        for (_, _, t_type, _, t_team, mut opt_status, _, _) in targets.iter_mut() {
                             if *t_team == team_to_wake && matches!(t_type, Some(TowerType::King)) {
                                 if let Some(ref mut status) = opt_status {
                                     if **status == TowerStatus::Sleeping {
@@ -450,10 +463,12 @@ pub fn spell_impact_system(
         Option<&TowerFootprint>,
         &Team,
         Option<&mut TowerStatus>,
+        Option<&DeathSpawn>,
     )>,
     mut match_state: ResMut<MatchState>,
     mut grid: ResMut<rust_royale_core::arena::ArenaGrid>,
     mut other_troops: Query<&mut Target, Without<SpellStrike>>,
+    mut death_events: EventWriter<DeathSpawnEvent>,
 ) {
     for (spell_ent, spell_pos, mut payload, spell_team, mut timer) in spells.iter_mut() {
         timer.0.tick(time.delta());
@@ -479,6 +494,7 @@ pub fn spell_impact_system(
                 tower_footprint,
                 target_team,
                 mut opt_status,
+                death_spawn,
             ) in targets.iter_mut()
             {
                 // Spells don't hurt your own troops!
@@ -518,6 +534,16 @@ pub fn spell_impact_system(
 
                     // --- DEATH RESOLUTION ---
                     if health.0 <= 0 {
+                        if let Some(ds) = death_spawn {
+                            death_events.send(DeathSpawnEvent {
+                                card_key: ds.card_key.clone(),
+                                count: ds.count,
+                                team: *target_team,
+                                fixed_x: target_pos.x,
+                                fixed_y: target_pos.y,
+                            });
+                        }
+
                         commands.entity(target_ent).despawn();
                         for mut other_target in other_troops.iter_mut() {
                             if other_target.0 == Some(target_ent) {
@@ -576,7 +602,7 @@ pub fn spell_impact_system(
             // AUTO-DESTROY PRINCESS TOWERS IF KING FELL
             if let Some(losing_team) = king_destroyed_team {
                 let mut princess_towers_to_destroy = Vec::new();
-                for (ent, _, _, t_type, footprint, team, _) in targets.iter() {
+                for (ent, _, _, t_type, footprint, team, _, _) in targets.iter() {
                     if *team == losing_team && matches!(t_type, Some(TowerType::Princess)) {
                         princess_towers_to_destroy.push((
                             ent,
@@ -598,7 +624,7 @@ pub fn spell_impact_system(
 
             // --- EXECUTE ALARM CLOCK 2 ---
             if let Some(team_to_wake) = wake_king_team {
-                for (_, _, _, t_type, _, t_team, mut opt_status) in targets.iter_mut() {
+                for (_, _, _, t_type, _, t_team, mut opt_status, _) in targets.iter_mut() {
                     if *t_team == team_to_wake && matches!(t_type, Some(TowerType::King)) {
                         if let Some(ref mut status) = opt_status {
                             if **status == TowerStatus::Sleeping {

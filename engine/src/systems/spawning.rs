@@ -1,9 +1,9 @@
 use bevy::prelude::*;
 use rust_royale_core::arena::TileType;
 use rust_royale_core::components::{
-    AoEPayload, AttackStats, AttackTimer, DeployTimer, Health, MatchPhase, MatchState,
-    PhysicalBody, PlayerDeck, Position, SpawnRequest, SpellStrike, Target, TargetingProfile, Team,
-    TowerFootprint, TowerStatus, TowerType, Velocity, WaypointPath,
+    AoEPayload, AttackStats, AttackTimer, DeathSpawn, DeathSpawnEvent, DeployTimer, Health,
+    MatchPhase, MatchState, PhysicalBody, PlayerDeck, Position, SpawnRequest, SpellStrike, Target,
+    TargetingProfile, Team, TowerFootprint, TowerStatus, TowerType, Velocity, WaypointPath,
 };
 use rust_royale_core::stats::{GlobalStats, SpeedTier};
 
@@ -125,49 +125,54 @@ pub fn spawn_entity_system(
                 // Calculate the radius (footprint / 2) in fixed-point math
                 let collision_radius = (troop_data.footprint_x as i32 * 1000) / 2;
 
-                let entity_id = commands
-                    .spawn((
-                        Position {
-                            x: fixed_x,
-                            y: fixed_y,
-                        },
-                        Velocity(math_speed),
-                        Health(troop_data.health),
-                        request.team,
-                        Target(None),
-                        // --- THE PHYSICAL BODY ---
-                        PhysicalBody {
-                            radius: collision_radius,
-                            mass: troop_data.mass,
-                        },
-                        AttackStats {
-                            damage: troop_data.damage,
-                            range: troop_data.range,
-                            hit_speed_ms: troop_data.hit_speed_ms,
-                            first_attack_sec: troop_data.first_attack_sec,
-                        },
-                        // Create a repeating timer based on the JSON hit speed
-                        AttackTimer(Timer::from_seconds(
-                            troop_data.hit_speed_ms as f32 / 1000.0,
-                            TimerMode::Repeating,
-                        )),
-                        // --- READ THE JSON DELAY HERE ---
-                        DeployTimer(Timer::from_seconds(
-                            troop_data.deploy_time_sec,
-                            TimerMode::Once,
-                        )),
-                        TargetingProfile {
-                            is_flying: troop_data.is_flying,
-                            is_building: false, // Troops are never buildings!
-                            targets_air: troop_data.targets_air,
-                            targets_ground: troop_data.targets_ground,
-                            preference: troop_data.target_preference.clone(),
-                        },
-                        WaypointPath(Vec::new()), // <-- AND THE NEW PATHFINDER
-                    ))
-                    .id();
+                let mut entity_cmds = commands.spawn((
+                    Position {
+                        x: fixed_x,
+                        y: fixed_y,
+                    },
+                    Velocity(math_speed),
+                    Health(troop_data.health),
+                    request.team,
+                    Target(None),
+                    // --- THE PHYSICAL BODY ---
+                    PhysicalBody {
+                        radius: collision_radius,
+                        mass: troop_data.mass,
+                    },
+                    AttackStats {
+                        damage: troop_data.damage,
+                        range: troop_data.range,
+                        hit_speed_ms: troop_data.hit_speed_ms,
+                        first_attack_sec: troop_data.first_attack_sec,
+                    },
+                    // Create a repeating timer based on the JSON hit speed
+                    AttackTimer(Timer::from_seconds(
+                        troop_data.hit_speed_ms as f32 / 1000.0,
+                        TimerMode::Repeating,
+                    )),
+                    // --- READ THE JSON DELAY HERE ---
+                    DeployTimer(Timer::from_seconds(
+                        troop_data.deploy_time_sec,
+                        TimerMode::Once,
+                    )),
+                    TargetingProfile {
+                        is_flying: troop_data.is_flying,
+                        is_building: false, // Troops are never buildings!
+                        targets_air: troop_data.targets_air,
+                        targets_ground: troop_data.targets_ground,
+                        preference: troop_data.target_preference.clone(),
+                    },
+                    WaypointPath(Vec::new()), // <-- AND THE NEW PATHFINDER
+                ));
 
-                entity_ids.push(entity_id);
+                if let Some(ds_card) = &troop_data.death_spawn {
+                    entity_cmds.insert(DeathSpawn {
+                        card_key: ds_card.clone(),
+                        count: troop_data.death_spawn_count.unwrap_or(1),
+                    });
+                }
+
+                entity_ids.push(entity_cmds.id());
             }
 
             println!(
@@ -334,7 +339,7 @@ pub fn spawn_towers_system(mut commands: Commands, global_stats: Res<GlobalStats
             TowerType::King => TowerStatus::Sleeping,
         };
 
-        commands.spawn((
+        let mut tower_cmds = commands.spawn((
             Position {
                 x: fixed_x,
                 y: fixed_y,
@@ -372,9 +377,88 @@ pub fn spawn_towers_system(mut commands: Commands, global_stats: Res<GlobalStats
             },
         ));
 
+        if let Some(ds_card) = &data.death_spawn {
+            tower_cmds.insert(DeathSpawn {
+                card_key: ds_card.clone(),
+                count: data.death_spawn_count.unwrap_or(1),
+            });
+        }
+
         println!(
             "SPAWNED: {} (Team: {:?}) at Center Grids [{}, {}]!",
             name, team, center_float_x, center_float_y
         );
+    }
+}
+
+pub fn handle_death_spawns_system(
+    mut commands: Commands,
+    mut events: EventReader<DeathSpawnEvent>,
+    global_stats: Res<GlobalStats>,
+) {
+    for event in events.read() {
+        if let Some(troop_data) = global_stats.0.troops.get(&event.card_key) {
+            for i in 0..event.count {
+                // Minor offset so they explode outward slightly
+                let offset_x = if event.count > 1 {
+                    (i as i32 % 2) * 400 - 200
+                } else {
+                    0
+                };
+                let offset_y = if event.count > 1 {
+                    (i as i32 / 2) * -400
+                } else {
+                    0
+                };
+
+                let math_speed = match troop_data.speed {
+                    SpeedTier::VerySlow => 600,
+                    SpeedTier::Slow => 900,
+                    SpeedTier::Medium => 1200,
+                    SpeedTier::Fast => 1800,
+                    SpeedTier::VeryFast => 2400,
+                };
+                let collision_radius = (troop_data.footprint_x as i32 * 1000) / 2;
+
+                commands.spawn((
+                    Position {
+                        x: event.fixed_x + offset_x,
+                        y: event.fixed_y + offset_y,
+                    },
+                    Velocity(math_speed),
+                    Health(troop_data.health),
+                    event.team,
+                    Target(None),
+                    PhysicalBody {
+                        radius: collision_radius,
+                        mass: troop_data.mass,
+                    },
+                    AttackStats {
+                        damage: troop_data.damage,
+                        range: troop_data.range,
+                        hit_speed_ms: troop_data.hit_speed_ms,
+                        first_attack_sec: troop_data.first_attack_sec,
+                    },
+                    AttackTimer(Timer::from_seconds(
+                        troop_data.hit_speed_ms as f32 / 1000.0,
+                        TimerMode::Repeating,
+                    )),
+                    // Small delay so they don't attack instantly
+                    DeployTimer(Timer::from_seconds(0.1, TimerMode::Once)),
+                    TargetingProfile {
+                        is_flying: troop_data.is_flying,
+                        is_building: false,
+                        targets_air: troop_data.targets_air,
+                        targets_ground: troop_data.targets_ground,
+                        preference: troop_data.target_preference.clone(),
+                    },
+                    WaypointPath(Vec::new()),
+                ));
+            }
+            println!(
+                "💀 DEATH SPAWN: {} {}s popped out!",
+                event.count, troop_data.name
+            );
+        }
     }
 }

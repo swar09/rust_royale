@@ -61,6 +61,8 @@ pub struct BuildingStats {
     pub hidden_when_inactive: Option<bool>,
     pub spawns_troop_id: Option<u32>,
     pub ignores_deployment_zones: Option<bool>,
+    pub death_spawn: Option<String>,
+    pub death_spawn_count: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -94,6 +96,8 @@ pub struct TroopStats {
     pub pierce_length: Option<f32>,
 
     pub spawn_count: Option<u32>,
+    pub death_spawn: Option<String>,
+    pub death_spawn_count: Option<u32>,
 }
 
 #[derive(Deserialize, Debug, Clone)]

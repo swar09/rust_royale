@@ -19,6 +19,21 @@ pub enum Team {
     Red,  // Player 2
 }
 
+#[derive(Component, Debug)]
+pub struct DeathSpawn {
+    pub card_key: String,
+    pub count: u32,
+}
+
+#[derive(Event, Debug)]
+pub struct DeathSpawnEvent {
+    pub card_key: String,
+    pub count: u32,
+    pub team: Team,
+    pub fixed_x: i32,
+    pub fixed_y: i32,
+}
+
 // The Event triggered when the UI asks to drop a card
 #[derive(Event)]
 pub struct SpawnRequest {
