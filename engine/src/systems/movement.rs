@@ -71,17 +71,29 @@ pub fn physics_movement_system(
 
     // Alive tower lookup for lane goal selection
     let divider_tiles = rust_royale_core::constants::ARENA_WIDTH / 2;
-    let mut red_left_alive   = false;
-    let mut red_right_alive  = false;
-    let mut blue_left_alive  = false;
+    let mut red_left_alive = false;
+    let mut red_right_alive = false;
+    let mut blue_left_alive = false;
     let mut blue_right_alive = false;
 
     for (t_team, t_type, footprint) in towers.iter() {
         if matches!(t_type, TowerType::Princess) {
             let is_left = footprint.start_x < divider_tiles;
             match t_team {
-                Team::Red  => { if is_left { red_left_alive  = true; } else { red_right_alive  = true; } }
-                Team::Blue => { if is_left { blue_left_alive = true; } else { blue_right_alive = true; } }
+                Team::Red => {
+                    if is_left {
+                        red_left_alive = true;
+                    } else {
+                        red_right_alive = true;
+                    }
+                }
+                Team::Blue => {
+                    if is_left {
+                        blue_left_alive = true;
+                    } else {
+                        blue_right_alive = true;
+                    }
+                }
             }
         }
     }
@@ -126,7 +138,7 @@ pub fn physics_movement_system(
                     // Override with the lane-appropriate approach tile so the path stays
                     // on the correct side of the arena.
                     let on_left = match spawn_lane {
-                        Some(SpawnLane::Left)  => true,
+                        Some(SpawnLane::Left) => true,
                         Some(SpawnLane::Right) => false,
                         None => pos.x < 10_000,
                     };
@@ -142,13 +154,19 @@ pub fn physics_movement_system(
                         target_grid_raw
                     };
 
+                    let a_star_range = if target_in_centre {
+                        0
+                    } else {
+                        total_range.max(1)
+                    };
+
                     try_calc_path(
                         &mut path,
                         &grid,
                         start_grid,
                         target_grid,
                         profile.is_flying,
-                        total_range.max(1),
+                        a_star_range,
                     );
                 }
 
@@ -183,11 +201,12 @@ pub fn physics_movement_system(
                         // so it routes through the bridge.
                         let start_grid = (pos.x / 1000, pos.y / 1000);
                         let on_left = match spawn_lane {
-                            Some(SpawnLane::Left)  => true,
+                            Some(SpawnLane::Left) => true,
                             Some(SpawnLane::Right) => false,
                             None => pos.x < 10_000,
                         };
-                        let target_grid = if tx >= 7_000 && tx <= 13_000 {
+                        let target_in_centre = tx >= 7_000 && tx <= 13_000;
+                        let target_grid = if target_in_centre {
                             let approach_x = if on_left { 8 } else { 11 };
                             let approach_y = if target_gy > 15 { 26 } else { 5 };
                             (approach_x, approach_y)
@@ -196,7 +215,19 @@ pub fn physics_movement_system(
                         };
                         let target_radius_tiles = (target_radius as f32 / 1000.0) as i32;
                         let total_range = (attack_stats.range as i32) + target_radius_tiles;
-                        try_calc_path(&mut path, &grid, start_grid, target_grid, profile.is_flying, total_range.max(1));
+                        let a_star_range = if target_in_centre {
+                            0
+                        } else {
+                            total_range.max(1)
+                        };
+                        try_calc_path(
+                            &mut path,
+                            &grid,
+                            start_grid,
+                            target_grid,
+                            profile.is_flying,
+                            a_star_range,
+                        );
                         // move stays 0 this frame; will follow GPS path next frame
                     } else if center_dist > 0.01 {
                         let dir_x = dx / center_dist;
@@ -217,7 +248,7 @@ pub fn physics_movement_system(
 
                     // Derive lane from component; fall back to current x if missing
                     let on_left = match spawn_lane {
-                        Some(SpawnLane::Left)  => true,
+                        Some(SpawnLane::Left) => true,
                         Some(SpawnLane::Right) => false,
                         None => pos.x < 10_000,
                     };
@@ -233,21 +264,44 @@ pub fn physics_movement_system(
                     let goal_grid: (i32, i32) = match team {
                         Team::Blue => {
                             if on_left {
-                                if red_left_alive  { (4, 27) } else { (8, 26) }
+                                if red_left_alive {
+                                    (4, 27)
+                                } else {
+                                    (8, 26)
+                                }
                             } else {
-                                if red_right_alive { (15, 27) } else { (11, 26) }
+                                if red_right_alive {
+                                    (15, 27)
+                                } else {
+                                    (11, 26)
+                                }
                             }
                         }
                         Team::Red => {
                             if on_left {
-                                if blue_left_alive  { (4, 4) } else { (8, 5) }
+                                if blue_left_alive {
+                                    (4, 4)
+                                } else {
+                                    (8, 5)
+                                }
                             } else {
-                                if blue_right_alive { (15, 4) } else { (11, 5) }
+                                if blue_right_alive {
+                                    (15, 4)
+                                } else {
+                                    (11, 5)
+                                }
                             }
                         }
                     };
 
-                    try_calc_path(&mut path, &grid, start_grid, goal_grid, profile.is_flying, 0);
+                    try_calc_path(
+                        &mut path,
+                        &grid,
+                        start_grid,
+                        goal_grid,
+                        profile.is_flying,
+                        0,
+                    );
                 }
 
                 if let Some(&(wgx, wgy)) = path.0.first() {
@@ -292,7 +346,8 @@ pub fn physics_movement_system(
             && new_gy >= 0
             && new_gy < rust_royale_core::constants::ARENA_HEIGHT as i32
             && {
-                let t = &grid.tiles[(new_gy * rust_royale_core::constants::ARENA_WIDTH as i32 + new_gx) as usize];
+                let t = &grid.tiles
+                    [(new_gy * rust_royale_core::constants::ARENA_WIDTH as i32 + new_gx) as usize];
                 match t {
                     TileType::River => profile.is_flying,
                     TileType::Tower | TileType::Wall => false,
@@ -309,7 +364,8 @@ pub fn physics_movement_system(
             let ngx = nx / 1000;
             let gy = pos.y / 1000;
             if ngx >= 0 && ngx < rust_royale_core::constants::ARENA_WIDTH as i32 {
-                let t = &grid.tiles[(gy * rust_royale_core::constants::ARENA_WIDTH as i32 + ngx) as usize];
+                let t = &grid.tiles
+                    [(gy * rust_royale_core::constants::ARENA_WIDTH as i32 + ngx) as usize];
                 if match t {
                     TileType::River => profile.is_flying,
                     TileType::Tower | TileType::Wall => false,
@@ -323,7 +379,8 @@ pub fn physics_movement_system(
             let ngy = ny / 1000;
             let gx = pos.x / 1000;
             if ngy >= 0 && ngy < rust_royale_core::constants::ARENA_HEIGHT as i32 {
-                let t = &grid.tiles[(ngy * rust_royale_core::constants::ARENA_WIDTH as i32 + gx) as usize];
+                let t = &grid.tiles
+                    [(ngy * rust_royale_core::constants::ARENA_WIDTH as i32 + gx) as usize];
                 if match t {
                     TileType::River => profile.is_flying,
                     TileType::Tower | TileType::Wall => false,
@@ -384,8 +441,7 @@ pub fn troop_collision_system(
     let mut combinations = p1.iter_combinations_mut();
 
     while let Some(
-        [(mut pos_a, body_a, profile_a, team_a, target_a, atk_a),
-         (mut pos_b, body_b, profile_b, team_b, target_b, atk_b)],
+        [(mut pos_a, body_a, profile_a, team_a, target_a, atk_a), (mut pos_b, body_b, profile_b, team_b, target_b, atk_b)],
     ) = combinations.fetch_next()
     {
         if profile_a.is_flying != profile_b.is_flying {
@@ -404,7 +460,11 @@ pub fn troop_collision_system(
         let (dx, dy, dist) = if dist_sq <= 0.1 {
             let nx = (pos_a.x % 3) as f32 - 1.0;
             let ny = (pos_a.y % 3) as f32 - 1.0;
-            let (nx, ny) = if nx == 0.0 && ny == 0.0 { (1.0, 0.0) } else { (nx, ny) };
+            let (nx, ny) = if nx == 0.0 && ny == 0.0 {
+                (1.0, 0.0)
+            } else {
+                (nx, ny)
+            };
             let d = (nx * nx + ny * ny).sqrt();
             (nx, ny, d)
         } else {
@@ -434,7 +494,11 @@ pub fn troop_collision_system(
                     let tty = to_ty / to_td;
                     let perp_x = -tty;
                     let perp_y = ttx;
-                    let sign = if dx * perp_x + dy * perp_y >= 0.0 { 1.0 } else { -1.0 };
+                    let sign = if dx * perp_x + dy * perp_y >= 0.0 {
+                        1.0
+                    } else {
+                        -1.0
+                    };
                     (perp_x * sign + ttx * 0.1, perp_y * sign + tty * 0.1, 0.7)
                 } else {
                     (col_dir_x, col_dir_y, 0.3)
@@ -471,15 +535,20 @@ pub fn troop_collision_system(
         let gax = new_ax / 1000;
         let gay = new_ay / 1000;
         let mut a_blocked = true;
-        if gax >= 0 && gax < rust_royale_core::constants::ARENA_WIDTH as i32
-            && gay >= 0 && gay < rust_royale_core::constants::ARENA_HEIGHT as i32
+        if gax >= 0
+            && gax < rust_royale_core::constants::ARENA_WIDTH as i32
+            && gay >= 0
+            && gay < rust_royale_core::constants::ARENA_HEIGHT as i32
         {
-            let tile = &grid.tiles[(gay * rust_royale_core::constants::ARENA_WIDTH as i32 + gax) as usize];
+            let tile =
+                &grid.tiles[(gay * rust_royale_core::constants::ARENA_WIDTH as i32 + gax) as usize];
             if match tile {
                 TileType::River => profile_a.is_flying,
                 TileType::Tower | TileType::Wall => false,
                 _ => true,
-            } { a_blocked = false; }
+            } {
+                a_blocked = false;
+            }
         }
 
         let (new_bx, new_by) = if a_blocked {
@@ -491,10 +560,13 @@ pub fn troop_collision_system(
         let gbx = new_bx / 1000;
         let gby = new_by / 1000;
         let mut b_blocked = true;
-        if gbx >= 0 && gbx < rust_royale_core::constants::ARENA_WIDTH as i32
-            && gby >= 0 && gby < rust_royale_core::constants::ARENA_HEIGHT as i32
+        if gbx >= 0
+            && gbx < rust_royale_core::constants::ARENA_WIDTH as i32
+            && gby >= 0
+            && gby < rust_royale_core::constants::ARENA_HEIGHT as i32
         {
-            let tile = &grid.tiles[(gby * rust_royale_core::constants::ARENA_WIDTH as i32 + gbx) as usize];
+            let tile =
+                &grid.tiles[(gby * rust_royale_core::constants::ARENA_WIDTH as i32 + gbx) as usize];
             if match tile {
                 TileType::River => profile_b.is_flying,
                 TileType::Tower | TileType::Wall => false,
@@ -511,9 +583,13 @@ pub fn troop_collision_system(
             let fay = pos_a.y + (push_ay + push_by);
             let fgx = fax / 1000;
             let fgy = fay / 1000;
-            let ok = fgx >= 0 && fgx < rust_royale_core::constants::ARENA_WIDTH as i32
-                && fgy >= 0 && fgy < rust_royale_core::constants::ARENA_HEIGHT as i32
-                && match grid.tiles[(fgy * rust_royale_core::constants::ARENA_WIDTH as i32 + fgx) as usize] {
+            let ok = fgx >= 0
+                && fgx < rust_royale_core::constants::ARENA_WIDTH as i32
+                && fgy >= 0
+                && fgy < rust_royale_core::constants::ARENA_HEIGHT as i32
+                && match grid.tiles
+                    [(fgy * rust_royale_core::constants::ARENA_WIDTH as i32 + fgx) as usize]
+                {
                     TileType::River => profile_a.is_flying,
                     TileType::Tower | TileType::Wall => false,
                     _ => true,

@@ -30,7 +30,7 @@ fn lane_allows_target(
         return true; // king tower centre band — both lanes allowed
     }
     match lane {
-        SpawnLane::Left  => target_fixed_x < 10_000,
+        SpawnLane::Left => target_fixed_x < 10_000,
         SpawnLane::Right => target_fixed_x >= 10_000,
     }
 }
@@ -54,7 +54,13 @@ pub fn targeting_system(
         Without<DeployTimer>,
     >,
     defenders: Query<
-        (Entity, &Position, &Team, &TargetingProfile, Option<&PhysicalBody>),
+        (
+            Entity,
+            &Position,
+            &Team,
+            &TargetingProfile,
+            Option<&PhysicalBody>,
+        ),
         With<Health>,
     >,
 ) {
@@ -89,7 +95,7 @@ pub fn targeting_system(
         {
             999.0
         } else {
-            5.5
+            attack_stats.range.max(5.5)
         };
 
         // ----------------------------------------------------------------
@@ -106,8 +112,7 @@ pub fn targeting_system(
                 let tr = def_body.map_or(0.0, |b| b.radius as f32 / 1000.0);
                 let dist = center_dist - ar - tr;
 
-                let lane_ok =
-                    lane_allows_target(spawn_lane, def_pos.x, def_profile.is_building);
+                let lane_ok = lane_allows_target(spawn_lane, def_pos.x, def_profile.is_building);
 
                 if dist <= sight_range && lane_ok {
                     continue; // target is still valid — keep it
@@ -191,9 +196,11 @@ pub fn targeting_system(
                     }
                 }
                 if final_dist <= attack_stats.range {
-                    attack_timer.0.set_duration(std::time::Duration::from_secs_f32(
-                        attack_stats.first_attack_sec,
-                    ));
+                    attack_timer
+                        .0
+                        .set_duration(std::time::Duration::from_secs_f32(
+                            attack_stats.first_attack_sec,
+                        ));
                     attack_timer.0.reset();
                 }
                 if spawn_lane.is_some() && is_new_entity {
@@ -201,7 +208,8 @@ pub fn targeting_system(
                         "Entity {:?} (lane {:?}) -> {:?}",
                         attacker_ent, spawn_lane, enemy_ent
                     );
-                }            }
+                }
+            }
         }
     }
 }
@@ -260,8 +268,14 @@ pub fn combat_damage_system(
             ));
             if let Some(target_ent) = target.0 {
                 commands.spawn((
-                    Position { x: attacker_pos.x, y: attacker_pos.y },
-                    Projectile { damage: stats.damage, speed: 6000 },
+                    Position {
+                        x: attacker_pos.x,
+                        y: attacker_pos.y,
+                    },
+                    Projectile {
+                        damage: stats.damage,
+                        speed: 6000,
+                    },
                     Target(Some(target_ent)),
                     SpriteBundle {
                         sprite: Sprite {
@@ -346,7 +360,9 @@ pub fn projectile_flight_system(
                         }
                         commands.entity(target_ent_inner).despawn();
                         for mut ot in other_troops.iter_mut() {
-                            if ot.0 == Some(target_ent_inner) { ot.0 = None; }
+                            if ot.0 == Some(target_ent_inner) {
+                                ot.0 = None;
+                            }
                         }
                         if let Some(fp) = tower_footprint {
                             grid.clear_tower(fp.start_x, fp.start_y, fp.size);
@@ -358,18 +374,33 @@ pub fn projectile_flight_system(
                                 wake_king_team = Some(*target_team);
                             }
                             if *target_team == Team::Red {
-                                if matches!(tower, TowerType::King) { match_state.blue_crowns = 3; }
-                                else { match_state.blue_crowns = (match_state.blue_crowns + 1).min(3); }
+                                if matches!(tower, TowerType::King) {
+                                    match_state.blue_crowns = 3;
+                                } else {
+                                    match_state.blue_crowns = (match_state.blue_crowns + 1).min(3);
+                                }
                             } else if matches!(tower, TowerType::King) {
                                 match_state.red_crowns = 3;
                             } else {
                                 match_state.red_crowns = (match_state.red_crowns + 1).min(3);
                             }
-                            println!("👑 TOWER DOWN! {}-{}", match_state.blue_crowns, match_state.red_crowns);
-                            if matches!(tower, TowerType::King) || match_state.phase == MatchPhase::Overtime {
+                            println!(
+                                "👑 TOWER DOWN! {}-{}",
+                                match_state.blue_crowns, match_state.red_crowns
+                            );
+                            if matches!(tower, TowerType::King)
+                                || match_state.phase == MatchPhase::Overtime
+                            {
                                 match_state.phase = MatchPhase::GameOver;
-                                let winner = if *target_team == Team::Red { "BLUE" } else { "RED" };
-                                println!("🛑 {} WINS! {}-{}", winner, match_state.blue_crowns, match_state.red_crowns);
+                                let winner = if *target_team == Team::Red {
+                                    "BLUE"
+                                } else {
+                                    "RED"
+                                };
+                                println!(
+                                    "🛑 {} WINS! {}-{}",
+                                    winner, match_state.blue_crowns, match_state.red_crowns
+                                );
                             }
                         }
                     }
@@ -378,11 +409,14 @@ pub fn projectile_flight_system(
                         let mut to_destroy = Vec::new();
                         for (ent, _, tt, fp, team, _, _, _) in targets.iter() {
                             if *team == losing_team && matches!(tt, Some(TowerType::Princess)) {
-                                to_destroy.push((ent, TowerFootprint {
-                                    start_x: fp.unwrap().start_x,
-                                    start_y: fp.unwrap().start_y,
-                                    size:    fp.unwrap().size,
-                                }));
+                                to_destroy.push((
+                                    ent,
+                                    TowerFootprint {
+                                        start_x: fp.unwrap().start_x,
+                                        start_y: fp.unwrap().start_y,
+                                        size: fp.unwrap().size,
+                                    },
+                                ));
                             }
                         }
                         for (ent, fp) in to_destroy {
@@ -427,7 +461,10 @@ pub fn projectile_flight_system(
 pub fn spell_impact_system(
     mut commands: Commands,
     time: Res<Time>,
-    mut spells: Query<(Entity, &Position, &mut AoEPayload, &Team, &mut DeployTimer), With<SpellStrike>>,
+    mut spells: Query<
+        (Entity, &Position, &mut AoEPayload, &Team, &mut DeployTimer),
+        With<SpellStrike>,
+    >,
     mut targets: Query<
         (
             Entity,
@@ -449,22 +486,49 @@ pub fn spell_impact_system(
 ) {
     for (spell_ent, spell_pos, mut payload, spell_team, mut timer) in spells.iter_mut() {
         timer.0.tick(time.delta());
-        if !timer.0.just_finished() { continue; }
+        if !timer.0.just_finished() {
+            continue;
+        }
 
-        println!("💥 SPELL wave {}/{} at ({},{})", payload.waves_total - payload.waves_remaining + 1, payload.waves_total, spell_pos.x, spell_pos.y);
+        println!(
+            "💥 SPELL wave {}/{} at ({},{})",
+            payload.waves_total - payload.waves_remaining + 1,
+            payload.waves_total,
+            spell_pos.x,
+            spell_pos.y
+        );
 
         let mut king_destroyed_team = None;
         let mut wake_king_team = None;
 
-        for (target_ent, mut target_pos, mut health, tower_type, tower_footprint, target_team, mut opt_status, death_spawn, physical_body) in targets.iter_mut() {
-            if spell_team == target_team { continue; }
+        for (
+            target_ent,
+            mut target_pos,
+            mut health,
+            tower_type,
+            tower_footprint,
+            target_team,
+            mut opt_status,
+            death_spawn,
+            physical_body,
+        ) in targets.iter_mut()
+        {
+            if spell_team == target_team {
+                continue;
+            }
 
             let dx = target_pos.x - spell_pos.x;
             let dy = target_pos.y - spell_pos.y;
             let dist = ((dx as f32).powi(2) + (dy as f32).powi(2)).sqrt();
-            if dist > payload.radius as f32 { continue; }
+            if dist > payload.radius as f32 {
+                continue;
+            }
 
-            let dmg = if tower_type.is_some() { payload.tower_damage } else { payload.damage };
+            let dmg = if tower_type.is_some() {
+                payload.tower_damage
+            } else {
+                payload.damage
+            };
             health.0 -= dmg;
 
             if payload.knockback > 0 && tower_type.is_none() && dist > 0.0 {
@@ -475,33 +539,49 @@ pub fn spell_impact_system(
             }
 
             if let Some(ref mut s) = opt_status {
-                if **s == TowerStatus::Sleeping { **s = TowerStatus::Active; }
+                if **s == TowerStatus::Sleeping {
+                    **s = TowerStatus::Active;
+                }
             }
 
             if health.0 <= 0 {
                 if let Some(ds) = death_spawn {
                     death_events.send(DeathSpawnEvent {
-                        card_key: ds.card_key.clone(), count: ds.count,
-                        team: *target_team, fixed_x: target_pos.x, fixed_y: target_pos.y,
+                        card_key: ds.card_key.clone(),
+                        count: ds.count,
+                        team: *target_team,
+                        fixed_x: target_pos.x,
+                        fixed_y: target_pos.y,
                     });
                 }
                 commands.entity(target_ent).despawn();
                 for mut ot in other_troops.iter_mut() {
-                    if ot.0 == Some(target_ent) { ot.0 = None; }
+                    if ot.0 == Some(target_ent) {
+                        ot.0 = None;
+                    }
                 }
-                if let Some(fp) = tower_footprint { grid.clear_tower(fp.start_x, fp.start_y, fp.size); }
+                if let Some(fp) = tower_footprint {
+                    grid.clear_tower(fp.start_x, fp.start_y, fp.size);
+                }
                 if let Some(tower) = tower_type {
-                    if matches!(tower, TowerType::King) { king_destroyed_team = Some(*target_team); }
-                    else if matches!(tower, TowerType::Princess) { wake_king_team = Some(*target_team); }
+                    if matches!(tower, TowerType::King) {
+                        king_destroyed_team = Some(*target_team);
+                    } else if matches!(tower, TowerType::Princess) {
+                        wake_king_team = Some(*target_team);
+                    }
                     if *target_team == Team::Red {
-                        if matches!(tower, TowerType::King) { match_state.blue_crowns = 3; }
-                        else { match_state.blue_crowns = (match_state.blue_crowns + 1).min(3); }
+                        if matches!(tower, TowerType::King) {
+                            match_state.blue_crowns = 3;
+                        } else {
+                            match_state.blue_crowns = (match_state.blue_crowns + 1).min(3);
+                        }
                     } else if matches!(tower, TowerType::King) {
                         match_state.red_crowns = 3;
                     } else {
                         match_state.red_crowns = (match_state.red_crowns + 1).min(3);
                     }
-                    if matches!(tower, TowerType::King) || match_state.phase == MatchPhase::Overtime {
+                    if matches!(tower, TowerType::King) || match_state.phase == MatchPhase::Overtime
+                    {
                         match_state.phase = MatchPhase::GameOver;
                     }
                 }
@@ -512,17 +592,29 @@ pub fn spell_impact_system(
             let mut to_destroy = Vec::new();
             for (ent, _, _, tt, fp, team, _, _, _) in targets.iter() {
                 if *team == losing_team && matches!(tt, Some(TowerType::Princess)) {
-                    to_destroy.push((ent, TowerFootprint { start_x: fp.unwrap().start_x, start_y: fp.unwrap().start_y, size: fp.unwrap().size }));
+                    to_destroy.push((
+                        ent,
+                        TowerFootprint {
+                            start_x: fp.unwrap().start_x,
+                            start_y: fp.unwrap().start_y,
+                            size: fp.unwrap().size,
+                        },
+                    ));
                 }
             }
-            for (ent, fp) in to_destroy { commands.entity(ent).despawn(); grid.clear_tower(fp.start_x, fp.start_y, fp.size); }
+            for (ent, fp) in to_destroy {
+                commands.entity(ent).despawn();
+                grid.clear_tower(fp.start_x, fp.start_y, fp.size);
+            }
         }
 
         if let Some(team_to_wake) = wake_king_team {
             for (_, _, _, tt, _, t_team, mut opt_s, _, _) in targets.iter_mut() {
                 if *t_team == team_to_wake && matches!(tt, Some(TowerType::King)) {
                     if let Some(ref mut s) = opt_s {
-                        if **s == TowerStatus::Sleeping { **s = TowerStatus::Active; }
+                        if **s == TowerStatus::Sleeping {
+                            **s = TowerStatus::Active;
+                        }
                     }
                 }
             }
@@ -530,7 +622,9 @@ pub fn spell_impact_system(
 
         payload.waves_remaining -= 1;
         if payload.waves_remaining > 0 {
-            timer.0.set_duration(std::time::Duration::from_secs_f32(0.1));
+            timer
+                .0
+                .set_duration(std::time::Duration::from_secs_f32(0.1));
             timer.0.reset();
         } else {
             commands.entity(spell_ent).despawn();
