@@ -1,8 +1,8 @@
 use bevy::prelude::*;
 use rust_royale_core::arena::{ArenaGrid, TileType};
 use rust_royale_core::components::{
-    ElixirUIText, Health, HealthValueText, MatchState, PlayerDeck, Position, Team, TowerFootprint,
-    TowerType,
+    CardUI, ElixirUIText, Health, HealthValueText, MatchState, PlayerDeck, Position, Team,
+    TowerFootprint, TowerType,
 };
 use rust_royale_core::constants::{ARENA_HEIGHT, ARENA_WIDTH, TILE_SIZE};
 
@@ -155,6 +155,54 @@ pub fn setup_ui(mut commands: Commands) {
         }),
         ElixirUIText,
     ));
+
+    // Spawn the Card Bar Container for Blue (bottom of screen)
+    commands
+        .spawn(NodeBundle {
+            style: Style {
+                width: Val::Percent(100.0),
+                height: Val::Px(120.0),
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(0.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                column_gap: Val::Px(15.0),
+                ..default()
+            },
+            ..default()
+        })
+        .with_children(|parent| {
+            for i in 0..4 {
+                parent
+                    .spawn((
+                        ButtonBundle {
+                            style: Style {
+                                width: Val::Px(80.0),
+                                height: Val::Px(100.0),
+                                border: UiRect::all(Val::Px(2.0)),
+                                ..default()
+                            },
+                            border_color: Default::default(),
+                            background_color: Color::rgb(0.2, 0.2, 0.2).into(),
+                            ..default()
+                        },
+                        CardUI {
+                            slot_index: i,
+                            team: Team::Blue,
+                        },
+                    ))
+                    .with_children(|card| {
+                        card.spawn(TextBundle::from_section(
+                            format!("Card {}", i + 1),
+                            TextStyle {
+                                font_size: 16.0,
+                                color: Color::WHITE,
+                                ..default()
+                            },
+                        ));
+                    });
+            }
+        });
 }
 
 pub fn update_elixir_ui(
@@ -198,5 +246,33 @@ pub fn update_elixir_ui(
             }
         }
         text.sections[2].value = red_str;
+    }
+}
+
+pub fn update_card_bar_system(
+    deck: Res<PlayerDeck>,
+    mut card_query: Query<(&CardUI, &mut BackgroundColor, &Children)>,
+    mut text_query: Query<&mut Text>,
+) {
+    for (card_ui, mut bg_color, children) in card_query.iter_mut() {
+        if card_ui.team == Team::Blue {
+            let card_name = deck.blue.hand[card_ui.slot_index]
+                .as_deref()
+                .unwrap_or("Empty");
+            
+            // Highlight selected card
+            if deck.blue_selected == Some(card_ui.slot_index) {
+                *bg_color = Color::rgb(0.5, 0.5, 0.2).into();
+            } else {
+                *bg_color = Color::rgb(0.2, 0.2, 0.2).into();
+            }
+
+            // Update text
+            for &child in children.iter() {
+                if let Ok(mut text) = text_query.get_mut(child) {
+                    text.sections[0].value = card_name.to_string();
+                }
+            }
+        }
     }
 }

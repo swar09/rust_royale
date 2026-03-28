@@ -17,8 +17,9 @@ pub struct MaxHealth(pub i32);
 pub struct HealthValueText;
 
 // Identifies which team owns the unit
-#[derive(Component, Debug, PartialEq, Clone, Copy)]
+#[derive(Component, Debug, PartialEq, Clone, Copy, Eq, Hash, Default)]
 pub enum Team {
+    #[default]
     Blue, // Player 1
     Red,  // Player 2
 }
@@ -254,6 +255,26 @@ pub struct PlayerDeck {
     pub blue_selected: Option<usize>,
     pub red_selected: Option<usize>,
 }
+
+// Markers for the UI Card buttons
+#[derive(Component)]
+pub struct CardUI {
+    pub slot_index: usize,
+    pub team: Team,
+}
+
+// The global state holding what we are currently dragging
+#[derive(Resource, Default)]
+pub struct DragState {
+    pub is_dragging: bool,
+    pub slot_index: usize,
+    pub card_key: String,
+    pub team: Team,
+}
+
+// A tag for the visual hologram floating under the cursor 
+#[derive(Component)]
+pub struct DragHologram;
 
 impl Default for PlayerDeck {
     fn default() -> Self {

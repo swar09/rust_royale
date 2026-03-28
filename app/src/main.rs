@@ -8,7 +8,7 @@ use rust_royale_engine::systems::combat::{
     combat_damage_system, projectile_flight_system, spell_impact_system, targeting_system,
 };
 use rust_royale_engine::systems::input::{
-    handle_mouse_clicks, mouse_interaction, select_card_system, setup_camera, window_controls,
+    handle_drag_and_drop, mouse_interaction, select_card_system, setup_camera, window_controls,
 };
 use rust_royale_engine::systems::match_manager::match_manager_system;
 use rust_royale_engine::systems::movement::{physics_movement_system, troop_collision_system};
@@ -16,7 +16,8 @@ use rust_royale_engine::systems::spawning::{
     deployment_system, handle_death_spawns_system, spawn_entity_system, spawn_towers_system,
 };
 use rust_royale_engine::systems::ui::{
-    draw_debug_grid, setup_ui, sync_visuals_system, update_elixir_ui, update_health_text_system,
+    draw_debug_grid, setup_ui, sync_visuals_system, update_card_bar_system, update_elixir_ui,
+    update_health_text_system,
 };
 
 /// Game states for menu/playing/paused/gameover flow
@@ -49,6 +50,7 @@ fn main() {
         .insert_resource(GlobalStats(parsed_stats))
         .insert_resource(MatchState::default())
         .insert_resource(PlayerDeck::default())
+        .insert_resource(rust_royale_core::components::DragState::default())
         // Fixed timestep: 60 ticks per second for deterministic simulation
         .insert_resource(Time::<Fixed>::from_seconds(1.0 / 60.0))
         .add_event::<rust_royale_core::components::SpawnRequest>()
@@ -63,7 +65,7 @@ fn main() {
                 mouse_interaction,
                 window_controls,
                 select_card_system,
-                handle_mouse_clicks,
+                handle_drag_and_drop,
             ),
         )
         // --- Game Logic (FixedUpdate at 60Hz for determinism) ---
@@ -92,6 +94,7 @@ fn main() {
             (
                 draw_debug_grid,
                 sync_visuals_system,
+                update_card_bar_system,
                 update_elixir_ui,
                 update_health_text_system,
             ),
